@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {join,resolve,dirname} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import ts from 'typescript';
+import {Miniflare} from 'miniflare';
+const root=resolve('.'),temp=await mkdtemp('/tmp/rota-test-'),compiled=new Map();
+async function compile(file){file=resolve(root,file);if(compiled.has(file))return compiled.get(file);const out=join(temp,compiled.size+'.mjs');compiled.set(file,out);let source=await readFile(file,'utf8');source=source.replace(/import\s*\{\s*env\s*\}\s*from\s*["']cloudflare:workers["'];?/g,'const env=globalThis.__testEnv;');for(const match of [...source.matchAll(/from\s*["']([^"']+)["']/g)]){let target=match[1];if(target==='zod')target=import.meta.resolve('zod');else if(target.startsWith('@/'))target=pathToFileURL(await compile(target.slice(2)+'.ts')).href;else if(target.startsWith('.'))target=pathToFileURL(await compile(resolve(dirname(file),target+'.ts'))).href;source=source.replace(match[0],`from ${JSON.stringify(target)}`);}await writeFile(out,ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);return out;}
+const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-05-01',d1Databases:['DB'],r2Buckets:['BUCKET']});
+try{
+ const DB=await mf.getD1Database('DB'),BUCKET=await mf.getR2Bucket('BUCKET');globalThis.__testEnv={DB,BUCKET};
+ for(const file of ['0000_narrow_blazing_skull.sql','0001_simple_the_order.sql','0002_sticky_purple_man.sql','0003_tough_pride.sql','0004_melodic_stryfe.sql','0005_normal_turbo.sql','0006_slimy_mandroid.sql']){const sql=await readFile(join(root,'drizzle',file),'utf8');for(const part of sql.split(';').map(x=>x.replace(/--> statement-breakpoint/g,'').trim()).filter(Boolean))await DB.prepare(part).run();}
+ const records=await import(pathToFileURL(await compile('app/api/records/route.ts'))),admin=await import(pathToFileURL(await compile('app/api/admin/route.ts'))),route=await import(pathToFileURL(await compile('app/api/route-estimate/route.ts'))),finance=await import(pathToFileURL(await compile('lib/finance.ts')));
+ const request=(path,body,user='owner-a',method='POST')=>new Request('https://test.local'+path,{method:body?method:'GET',headers:{...(user?{'oai-authenticated-user-id':user}:{}),'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ const trip={kind:'trip',tripDate:new Date().toISOString().slice(0,10),origin:'Cristalina, GO',destination:'Sinop, MT',freight:13200,km:1800,diesel:4700,toll:750,oil:0,extraItems:[{category:'Alimentação',amount:80},{category:'Ajudante',amount:120}],axles:6};
+ assert.equal((await records.GET(request('/api/records',null,''))).status,401);
+ let response=await records.POST(request('/api/records',trip));assert.equal(response.status,201);const {id}=await response.json();
+ let data=await (await records.GET(request('/api/records'))).json();assert.equal(data.trips[0].extras,200);assert.equal(data.trips[0].loadedWeight,null);
+ assert.equal((await records.POST(request('/api/records',{...trip,freight:-1}))).status,400);
+ assert.equal((await records.POST(request('/api/records',{...trip,tripDate:'2026-02-30'}))).status,400);
+ assert.equal((await records.PUT(request('/api/records',{...trip,id,freight:14000},'owner-b','PUT'))).status,404);
+ assert.equal((await records.PUT(request('/api/records',{...trip,id,freight:14000},'owner-a','PUT'))).status,200);
+ assert.equal((await records.POST(request('/api/records',{kind:'revenue',revenueDate:trip.tripDate,category:'Reembolso',description:'Devolução',amount:300}))).status,201);
+ assert.equal((await records.POST(request('/api/records',{kind:'expense',expenseDate:trip.tripDate,category:'Seguro',description:'Seguro',amount:100}))).status,201);
+ const saved=await (await admin.GET(request('/api/admin?action=backup'))).json();assert.equal(saved.trips[0].freight,14000);assert.equal(saved.revenues[0].amount,300);assert.equal(saved.trips[0].extraItems.length,2);
+ for(let i=0;i<2;i++)assert.equal((await admin.POST(request('/api/admin',{action:'import',backup:saved,confirm:true}))).status,200);
+ data=await (await records.GET(request('/api/records'))).json();assert.equal(data.trips.length,1);assert.equal(data.revenues.length,1);
+ for(let i=0;i<2;i++)assert.equal((await admin.POST(request('/api/admin',{action:'import',backup:saved,confirm:true},'owner-b'))).status,200);
+ assert.equal((await (await records.GET(request('/api/records',null,'owner-b'))).json()).trips.length,1);
+ const month=finance.previousMonth();await records.POST(request('/api/records',{...trip,tripDate:month+'-15'}));
+ assert.equal((await admin.POST(request('/api/admin',{action:'clear',scope:'month',month,confirm:'wrong'}))).status,400);
+ const cleared=await admin.POST(request('/api/admin',{action:'clear',scope:'month',month,confirm:month}));assert.equal(cleared.status,200);assert.equal((await cleared.json()).backup.trips.length,2);
+ assert.equal((await (await records.GET(request('/api/records'))).json()).trips.length,1);
+ const originalFetch=globalThis.fetch;let calls=0;
+ globalThis.fetch=async()=>{calls++;return Response.json({code:'Ok',routes:[{distance:244000}]});};
+ const query={origin:'Rio Verde, GO',destination:'Doverlândia, GO'};
+ const estimate=await (await route.POST(request('/api/route-estimate',query))).json();assert.equal(estimate.km,244);assert.equal(estimate.toll,null);
+ assert.equal((await route.POST(request('/api/route-estimate',query))).status,200);assert.equal(calls,1,'cached route makes no extra public request');
+ assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Sinop, MT'}))).status,429);
+ assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Unknown city'}))).status,422);
+ assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Rio Verde, GO'}))).status,422);
+ assert.equal((await route.POST(request('/api/route-estimate',{...query,origin:'Bom Jesus'}))).status,422);
+ await DB.prepare("DELETE FROM route_limits").run();globalThis.fetch=async()=>Response.json({code:'NoRoute'});
+ assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Sinop, MT'}))).status,422);
+ globalThis.fetch=originalFetch;
+ await records.DELETE(new Request('https://test.local/api/records?kind=trip&id='+id,{method:'DELETE',headers:{'oai-authenticated-user-id':'owner-a'}}));assert.equal((await (await records.GET(request('/api/records'))).json()).trips.length,0);
+ // Arbitrary month, year boundary, all-month scope, and owner isolation.
+ await records.POST(request('/api/records',{...trip,tripDate:'2024-12-31'}));
+ await records.POST(request('/api/records',{...trip,tripDate:'2025-01-01'}));
+ assert.equal((await admin.POST(request('/api/admin',{action:'clear',scope:'month',month:'2024-13',confirm:'2024-13'}))).status,400);
+ assert.equal((await admin.POST(request('/api/admin',{action:'clear',scope:'month',month:'2024-12',confirm:'2024-12'}))).status,200);
+ let after=await (await records.GET(request('/api/records'))).json();assert.deepEqual(after.trips.map(t=>t.tripDate),['2025-01-01']);
+ assert.equal((await admin.POST(request('/api/admin',{action:'clear',scope:'all',confirm:'wrong'}))).status,400);
+ const clearedAll=await admin.POST(request('/api/admin',{action:'clear',scope:'all',confirm:'LIMPAR TODOS'}));assert.equal(clearedAll.status,200);
+ const beforeAll=(await clearedAll.json()).backup;assert.equal(beforeAll.trips.length,1);assert.equal(beforeAll.expenses.length,1);assert.equal(beforeAll.revenues.length,1);
+ after=await (await records.GET(request('/api/records'))).json();assert.equal(after.trips.length+after.expenses.length+after.revenues.length,0);assert.equal(after.company.name,'Rota Financeira');
+ assert.equal((await (await records.GET(request('/api/records',null,'owner-b'))).json()).trips.length,1);
+ const snapshots=await (await admin.GET(request('/api/admin?action=snapshots'))).json();assert.ok(snapshots.items.length>0);
+ console.log('PASS: migrations, classified costs, receipts, edit, ownership, validation, backup round trip and idempotency, monthly clearing, no reseeding, free road distances, route cache, global rate limit, ambiguous cities, same-city and no-route fallback.');
+}finally{await mf.dispose();await rm(temp,{recursive:true,force:true});}

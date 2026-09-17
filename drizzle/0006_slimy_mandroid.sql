@@ -1,0 +1,1 @@
+ALTER TABLE `trips` ADD `loss_alert_percent` real DEFAULT 10 NOT NULL;
