@@ -1,1 +1,0 @@
-ALTER TABLE `trips` ADD `driver_percent` real DEFAULT 0 NOT NULL;

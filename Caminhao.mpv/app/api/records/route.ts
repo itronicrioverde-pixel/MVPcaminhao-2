@@ -1,6 +1,0 @@
-import {db,owner,failure,records,writeRecord,tables,type Kind} from "@/lib/records-server";
-export async function GET(request:Request){try{return Response.json(await records(owner(request)),{headers:{"cache-control":"no-store"}});}catch(e){return failure(e);}}
-async function save(request:Request,update:boolean){try{const user=owner(request),p=await request.json() as Record<string,unknown>;if(!["trip","expense","revenue"].includes(String(p.kind)))return Response.json({error:"Tipo inválido"},{status:400});const id=update?String(p.id??""):crypto.randomUUID();const result=await writeRecord(p.kind as Kind,p,user,id,update).run();if(!result.meta.changes)return Response.json({error:"Registro não encontrado"},{status:404});return Response.json({ok:true,id},{status:update?200:201});}catch(e){return failure(e);}}
-export const POST=(r:Request)=>save(r,false);
-export const PUT=(r:Request)=>save(r,true);
-export async function DELETE(request:Request){try{const user=owner(request),url=new URL(request.url),kind=url.searchParams.get("kind") as Kind;if(!["trip","expense","revenue"].includes(kind))return Response.json({error:"Tipo inválido"},{status:400});await db().prepare(`DELETE FROM ${tables[kind]} WHERE id=? AND owner_id=?`).bind(url.searchParams.get("id"),user).run();return Response.json({ok:true});}catch(e){return failure(e);}}

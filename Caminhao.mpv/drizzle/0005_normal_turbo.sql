@@ -1,1 +1,0 @@
-ALTER TABLE `trips` ADD `freight_per_ton` real;

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {join,resolve,dirname} from 'node:path';
+import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import ts from 'typescript';
 import {Miniflare} from 'miniflare';
-const root=resolve('.'),temp=await mkdtemp('/tmp/rota-test-'),compiled=new Map();
+const root=resolve('.'),temp=await mkdtemp(join(tmpdir(),'rota-test-')),compiled=new Map();
 async function compile(file){file=resolve(root,file);if(compiled.has(file))return compiled.get(file);const out=join(temp,compiled.size+'.mjs');compiled.set(file,out);let source=await readFile(file,'utf8');source=source.replace(/import\s*\{\s*env\s*\}\s*from\s*["']cloudflare:workers["'];?/g,'const env=globalThis.__testEnv;');for(const match of [...source.matchAll(/from\s*["']([^"']+)["']/g)]){let target=match[1];if(target==='zod')target=import.meta.resolve('zod');else if(target.startsWith('@/'))target=pathToFileURL(await compile(target.slice(2)+'.ts')).href;else if(target.startsWith('.'))target=pathToFileURL(await compile(resolve(dirname(file),target+'.ts'))).href;source=source.replace(match[0],`from ${JSON.stringify(target)}`);}await writeFile(out,ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);return out;}
 const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-05-01',d1Databases:['DB'],r2Buckets:['BUCKET']});
 try{
@@ -13,12 +14,13 @@ try{
  const records=await import(pathToFileURL(await compile('app/api/records/route.ts'))),admin=await import(pathToFileURL(await compile('app/api/admin/route.ts'))),route=await import(pathToFileURL(await compile('app/api/route-estimate/route.ts'))),finance=await import(pathToFileURL(await compile('lib/finance.ts')));
  const request=(path,body,user='owner-a',method='POST')=>new Request('https://test.local'+path,{method:body?method:'GET',headers:{...(user?{'oai-authenticated-user-id':user}:{}),'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
  const trip={kind:'trip',tripDate:new Date().toISOString().slice(0,10),origin:'Cristalina, GO',destination:'Sinop, MT',freight:13200,km:1800,diesel:4700,toll:750,oil:0,extraItems:[{category:'Alimentação',amount:80},{category:'Ajudante',amount:120}],axles:6};
- assert.equal((await records.GET(request('/api/records',null,''))).status,401);
+ assert.equal((await records.GET(request('/api/records',null,''))).status,401);const unauthorized=await (await records.GET(request('/api/records',null,''))).json();assert.equal(unauthorized.code,'SESSION_EXPIRED');assert.equal(unauthorized.error,'Sua sessão expirou ou esta conta não possui acesso. Entre novamente.');
  let response=await records.POST(request('/api/records',trip));assert.equal(response.status,201);const {id}=await response.json();
  let data=await (await records.GET(request('/api/records'))).json();assert.equal(data.trips[0].extras,200);assert.equal(data.trips[0].loadedWeight,null);
- assert.equal((await records.POST(request('/api/records',{...trip,freight:-1}))).status,400);
+ let invalid=await records.POST(request('/api/records',{...trip,freight:-1}));assert.equal(invalid.status,400);assert.equal((await invalid.json()).code,'INVALID_DATA');
+ let typeInvalid=await records.POST(request('/api/records',{kind:'unknown'}));assert.equal(typeInvalid.status,400);assert.equal((await typeInvalid.json()).code,'INVALID_TYPE');
  assert.equal((await records.POST(request('/api/records',{...trip,tripDate:'2026-02-30'}))).status,400);
- assert.equal((await records.PUT(request('/api/records',{...trip,id,freight:14000},'owner-b','PUT'))).status,404);
+ const ownerMiss=await records.PUT(request('/api/records',{...trip,id,freight:14000},'owner-b','PUT'));assert.equal(ownerMiss.status,404);assert.equal((await ownerMiss.json()).code,'NOT_FOUND');
  assert.equal((await records.PUT(request('/api/records',{...trip,id,freight:14000},'owner-a','PUT'))).status,200);
  assert.equal((await records.POST(request('/api/records',{kind:'revenue',revenueDate:trip.tripDate,category:'Reembolso',description:'Devolução',amount:300}))).status,201);
  assert.equal((await records.POST(request('/api/records',{kind:'expense',expenseDate:trip.tripDate,category:'Seguro',description:'Seguro',amount:100}))).status,201);
@@ -36,12 +38,12 @@ try{
  const query={origin:'Rio Verde, GO',destination:'Doverlândia, GO'};
  const estimate=await (await route.POST(request('/api/route-estimate',query))).json();assert.equal(estimate.km,244);assert.equal(estimate.toll,null);
  assert.equal((await route.POST(request('/api/route-estimate',query))).status,200);assert.equal(calls,1,'cached route makes no extra public request');
- assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Sinop, MT'}))).status,429);
- assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Unknown city'}))).status,422);
- assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Rio Verde, GO'}))).status,422);
+ const rateLimited=await route.POST(request('/api/route-estimate',{...query,destination:'Sinop, MT'}));assert.equal(rateLimited.status,429);assert.equal((await rateLimited.json()).code,'RATE_LIMITED');
+ const noCity=await route.POST(request('/api/route-estimate',{...query,destination:'Unknown city'}));assert.equal(noCity.status,422);assert.equal((await noCity.json()).code,'INVALID_CITY');
+ const sameCity=await route.POST(request('/api/route-estimate',{...query,destination:'Rio Verde, GO'}));assert.equal(sameCity.status,422);assert.equal((await sameCity.json()).code,'SAME_CITY');
  assert.equal((await route.POST(request('/api/route-estimate',{...query,origin:'Bom Jesus'}))).status,422);
  await DB.prepare("DELETE FROM route_limits").run();globalThis.fetch=async()=>Response.json({code:'NoRoute'});
- assert.equal((await route.POST(request('/api/route-estimate',{...query,destination:'Sinop, MT'}))).status,422);
+ const noRoute=await route.POST(request('/api/route-estimate',{...query,destination:'Sinop, MT'}));assert.equal(noRoute.status,422);assert.equal((await noRoute.json()).code,'NO_ROUTE');
  globalThis.fetch=originalFetch;
  await records.DELETE(new Request('https://test.local/api/records?kind=trip&id='+id,{method:'DELETE',headers:{'oai-authenticated-user-id':'owner-a'}}));assert.equal((await (await records.GET(request('/api/records'))).json()).trips.length,0);
  // Arbitrary month, year boundary, all-month scope, and owner isolation.
