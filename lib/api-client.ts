@@ -3,6 +3,7 @@ import { SESSION_EXPIRED_MESSAGE } from "@/lib/api-errors";
 const DEFAULT_TIMEOUT_MS = 20000;
 const NO_CONNECTION_MESSAGE = "Sem conexão com o servidor. Verifique sua internet e tente novamente.";
 const TIMEOUT_MESSAGE = "A requisição demorou demais. Aguarde um instante e tente novamente.";
+export const UNEXPECTED_RESPONSE_MESSAGE = "O servidor retornou uma resposta inesperada. Recarregue a página e tente novamente.";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -76,21 +77,24 @@ async function parseResponse<T>(response: Response): Promise<T> {
   const status = response.status;
   const contentType = response.headers.get("content-type") ?? "";
   const isJson = contentType.includes("json");
-  let data: unknown;
-  if (isJson) {
+  const text = await response.text().catch(() => "");
+  const emptyBody = text.trim() === "";
+  let data: unknown = undefined;
+  if (!emptyBody && isJson) {
     try {
-      data = await response.json();
+      data = JSON.parse(text);
     } catch {
       data = undefined;
     }
-  } else {
-    try {
-      data = await response.text();
-    } catch {
-      data = undefined;
-    }
+  } else if (!emptyBody) {
+    data = text;
   }
-  if (response.ok) return data as T;
+  if (response.ok) {
+    if (!emptyBody && (!isJson || data === undefined)) {
+      throw new ApiError(0, UNEXPECTED_RESPONSE_MESSAGE, "INVALID_RESPONSE");
+    }
+    return data as T;
+  }
   const found = findError(data);
   const message = status === 401 ? SESSION_EXPIRED_MESSAGE : found?.message ?? messageForStatus(status);
   const code = status === 401 ? "SESSION_EXPIRED" : found?.code ?? defaultCodeForStatus(status);

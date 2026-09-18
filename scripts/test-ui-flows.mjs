@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {join,resolve,dirname} from 'node:path';
+import {tmpdir} from 'node:os';
+import {pathToFileURL} from 'node:url';
+import ts from 'typescript';
+const root=resolve('.'),temp=await mkdtemp(join(tmpdir(),'ui-flows-test-')),compiled=new Map();
+async function compile(file){file=resolve(root,file);if(compiled.has(file))return compiled.get(file);const out=join(temp,compiled.size+'.mjs');compiled.set(file,out);let source=await readFile(file,'utf8');for(const match of [...source.matchAll(/from\s*["']([^"']+)["']/g)]){let target=match[1];if(target.startsWith('@/'))target=pathToFileURL(await compile(target.slice(2)+'.ts')).href;else if(target.startsWith('.'))target=pathToFileURL(await compile(resolve(dirname(file),target+'.ts'))).href;source=source.replace(match[0],`from ${JSON.stringify(target)}`);}await writeFile(out,ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);return out;}
+const names=[];
+const tripA={id:'A',tripDate:'2026-01-05',clientName:'Cliente X',origin:'São Paulo, SP',destination:'Rio de Janeiro, RJ',cargoType:'Grãos',freightPerTon:250,freight:200000,km:480,diesel:1200,toll:340,oil:120,extras:90,extraItems:[{category:'Ajudante',amount:80}],loadedWeight:20000,deliveredWeight:19900,driverPercent:12,axles:6,lossAlertPercent:5,notes:'ok'};
+const tripB={...tripA,id:'B',clientName:'Cliente Y',origin:'Curitiba, PR',destination:'Florianópolis, SC',tripDate:'2026-02-10',lossAlertPercent:5};
+try{
+ const {initialTripForm,initialExtras}=await import(pathToFileURL(await compile('lib/trip-form.ts')));
+ const {isRecordsPayload}=await import(pathToFileURL(await compile('lib/records-payload.ts')));
+ const hoje=new Date().toISOString().slice(0,10);
+ const nova=initialTripForm(null,[]);
+ assert.equal(nova.tripDate,hoje,'nova viagem inicia com a data de hoje');
+ assert.equal(nova.axles,'6');assert.equal(nova.lossAlertPercent,'10');assert.equal(nova.clientName,undefined,'nova viagem não herda cliente');
+ names.push('nova viagem inicia vazia');
+ const editA=initialTripForm(tripA,[]);
+ assert.equal(editA.clientName,'Cliente X');assert.equal(editA.origin,'São Paulo, SP');assert.equal(editA.loadedWeight,'20','peso é convertido para toneladas');assert.equal(editA.deliveredWeight,'19.9');assert.equal(editA.tripDate,'2026-01-05');
+ names.push('viagem A é preenchida com os dados dela');
+ const editB=initialTripForm(tripB,[]);
+ assert.equal(editB.clientName,'Cliente Y');assert.equal(editB.origin,'Curitiba, PR');assert.equal(editB.tripDate,'2026-02-10');
+ assert.notEqual(editB.clientName,editA.clientName,'trocar de viagem deixa de exibir os dados da anterior');
+ assert.notEqual(editB.origin,editA.origin);
+ names.push('trocar de viagem reseta os campos exibidos');
+ const editA2=initialTripForm(tripA,[]);
+ assert.equal(editA2.loadedWeight,'20','reabrir a mesma viagem restaura o peso dela');
+ names.push('reabrir a mesma viagem restaura os dados dela');
+ assert.deepEqual(initialExtras(tripA),[{category:'Ajudante',amount:'80'}],'extras da viagem são preservados');
+ assert.deepEqual(initialExtras(null),[],'nova viagem começa sem extras');
+ names.push('extras acompanham a viagem selecionada');
+ const payloadValido={trips:[tripA],expenses:[],revenues:[],company:{name:'X',cnpj:''}};
+ assert.ok(isRecordsPayload(payloadValido),'payload válido do /api/records passa');
+ assert.ok(!isRecordsPayload({trips:[],expenses:[],company:{name:'X',cnpj:''}}),'sem revenues é rejeitado');
+ assert.ok(!isRecordsPayload({trips:[tripA],expenses:[],revenues:[],company:null}),'empresa ausente é rejeitada');
+ assert.ok(!isRecordsPayload({trips:'texto',expenses:[],revenues:[],company:{name:'X',cnpj:''}}),'trips fora do formato é rejeitado');
+ assert.ok(!isRecordsPayload({trips:[],expenses:[],revenues:[]}),'dados sem viagens e sem empresa são rejeitados');
+ assert.ok(!isRecordsPayload(undefined),'corpo vazio é rejeitado');
+ assert.ok(!isRecordsPayload('<html>...</html>'),'HTML não passa pela validação de formato');
+ names.push('payload inválido rejeitado antes de atualizar a tela');
+ console.log('PASS: '+names.join('; ')+'.');
+}finally{await rm(temp,{recursive:true,force:true});}

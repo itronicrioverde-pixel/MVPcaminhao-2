@@ -14,6 +14,7 @@ import { Toaster } from "@/components/ui/sonner";
 import {FinanceEditDialog,TripEditor,RevenueDialog,RevenueList,AdminView} from "./management";
 import {httpApi,ApiError} from "@/lib/api-client";
 import {driverCommission,type Trip,type Expense,type Revenue,type Company} from "@/lib/finance";
+import {isRecordsPayload} from "@/lib/records-payload";
 type View = "painel" | "viagens" | "financeiro" | "rotas" | "clientes" | "admin";
 type MonthlyPoint = { month: string; Faturamento: number; Despesas: number; Resultado: number };
 type Slice = { name: string; value: number };
@@ -26,6 +27,7 @@ const axisMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: 
 const chartDomain: [(value:number)=>number,(value:number)=>number] = [(min:number)=>Math.min(0,min<0?min*1.15:0),(max:number)=>Math.max(1,max*1.15)];
 const compactMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const SIGN_IN_URL = "/signin-with-chatgpt?return_to=%2F";
 const pieColors = ["#0d5c43", "#f4a825", "#df694d", "#4d82a8", "#8c6bb1", "#718078"];
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "painel", label: "Painel", icon: LayoutDashboard }, { id: "viagens", label: "Viagens", icon: Truck },
@@ -60,30 +62,37 @@ export default function DashboardClient({ displayName }: { displayName: string }
   const [expenseCategory, setExpenseCategory] = useState("Manutenção");
   const [search, setSearch] = useState("");
   const hasLoaded = useRef(false);
+  const mounted = useRef(true);
   const [sessionExpired, setSessionExpired] = useState(false);
-  const [loadAttempt, setLoadAttempt] = useState(0);
-  const reloadData = useCallback(async () => { setLoadAttempt((attempt) => attempt + 1); }, []);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await httpApi.get<{ trips: Trip[]; expenses: Expense[]; revenues: Revenue[]; company: Company }>("/api/records");
-        if (cancelled) return;
-        setTrips(data.trips); setExpenses(data.expenses); setRevenues(data.revenues??[]); setCompany(data.company); setError(""); setSessionExpired(false);
-        hasLoaded.current = true;
-      } catch (err) {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : "Falha ao carregar os dados.";
-        if (err instanceof ApiError && err.status === 401) setSessionExpired(true);
-        if (hasLoaded.current) {
-          toast.error(message, { action: { label: "Tentar novamente", onClick: () => { void reloadData(); } } });
+  useEffect(() => () => { mounted.current = false; }, []);
+  const reloadRef = useRef<() => Promise<void>>(async () => {});
+  const loadData = useCallback(async () => {
+    try {
+      const data = await httpApi.get<unknown>("/api/records");
+      if (!isRecordsPayload(data)) throw new Error("O servidor retornou dados inesperados. Recarregue a página e tente novamente.");
+      if (!mounted.current) return false;
+      setTrips(data.trips); setExpenses(data.expenses); setRevenues(data.revenues); setCompany(data.company); setError(""); setSessionExpired(false);
+      hasLoaded.current = true;
+      return true;
+    } catch (err) {
+      if (!mounted.current) return false;
+      const message = err instanceof Error ? err.message : "Falha ao carregar os dados.";
+      if (err instanceof ApiError && err.status === 401) setSessionExpired(true);
+      if (hasLoaded.current) {
+        if (err instanceof ApiError && err.status === 401) {
+          toast.error(message, { action: { label: "Entrar novamente", onClick: () => { window.location.href = SIGN_IN_URL; } } });
         } else {
-          setError(message);
+          toast.error(message, { action: { label: "Tentar novamente", onClick: () => { void reloadRef.current(); } } });
         }
-      } finally { if (!cancelled) setLoading(false); }
-    })();
-    return () => { cancelled = true; };
-  }, [loadAttempt, reloadData]);
+      } else {
+        setError(message);
+      }
+      return false;
+    } finally { if (mounted.current) setLoading(false); }
+  }, []);
+  const reloadData = useCallback(async () => { await loadData(); }, [loadData]);
+  useEffect(() => { reloadRef.current = reloadData; });
+  useEffect(() => { const id = requestAnimationFrame(() => { void reloadRef.current(); }); return () => cancelAnimationFrame(id); }, []);
 
   const filteredTrips = useMemo(() => trips.filter((trip) => trip.tripDate.startsWith(year)), [trips, year]);
   const filteredExpenses = useMemo(() => expenses.filter((expense) => expense.expenseDate.startsWith(year)), [expenses, year]);
@@ -143,7 +152,7 @@ export default function DashboardClient({ displayName }: { displayName: string }
     {menuOpen && <button className="fixed inset-0 z-30 bg-black/45 lg:hidden" onClick={() => setMenuOpen(false)} aria-label="Fechar menu" />}
     <main className="min-h-screen pb-24 lg:ml-[272px] lg:pb-8">
       <header className="sticky top-0 z-20 border-b border-black/[.06] bg-[#f2f4f3]/90 px-4 py-3 backdrop-blur-xl sm:px-7 lg:px-9"><div className="app-topbar mx-auto flex max-w-[1500px] items-center gap-3"><button className="grid size-11 place-items-center rounded-xl bg-white shadow-sm lg:hidden" onClick={() => setMenuOpen(true)} aria-label="Abrir menu"><Menu /></button><div className="min-w-0 flex-1"><p className="text-sm text-[#708078]">Financeiro de viagens</p><h1 className="truncate text-xl font-bold sm:text-2xl">{navItems.find((item) => item.id === view)?.label}</h1></div><Select value={year} onValueChange={(value) => value && setYear(value)}><SelectTrigger className="h-11 w-[110px] rounded-xl bg-white"><CalendarDays className="size-4" /><SelectValue /></SelectTrigger><SelectContent>{years.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><Button className="h-11 shrink-0 rounded-xl" onClick={()=>{setEditing(null);setTripOpen(true);}}><Plus/>Nova viagem</Button><TripEditor open={tripOpen} setOpen={setTripOpen} trip={editing} history={trips} onSaved={reloadData}/></div></header>
-      <div className="mx-auto max-w-[1500px] p-4 sm:p-7 lg:p-9">{loading ? <Loading /> : error ? <ErrorState message={error} retry={reloadData} session={sessionExpired} /> : <>{view === "painel" && <DashboardView revenue={revenue} costs={costs} profit={profit} margin={margin} totalKm={totalKm} trips={filteredTrips} monthly={monthly} expenseBreakdown={expenseBreakdown} profitByTrip={profitByTrip} onTrip={() => {setEditing(null);setTripOpen(true);}} />}{view === "viagens" && <TripsView trips={filteredTrips} search={search} setSearch={setSearch} onEdit={(trip)=>{setEditing(trip);setTripOpen(true);}} onRemove={(id) => remove("trip", id)} />}{view === "financeiro" && <><FinanceView onEdit={(item:Expense)=>setFinanceEditing({kind:"expense",item})} onRevenue={()=>setRevenueOpen(true)} expenses={filteredExpenses} breakdown={expenseBreakdown} monthly={monthly} revenue={revenue} costs={costs} profit={profit} onCreate={() => setExpenseOpen(true)} onRemove={(id:string) => remove("expense", id)} /><RevenueList onEdit={item=>setFinanceEditing({kind:"revenue",item})} items={filteredRevenues} onRemove={id=>remove("revenue",id)}/></>}{view === "rotas" && <RoutesView routes={routeRanking} />}{view === "clientes" && <ClientsView clients={clientSummary} />}{view==="admin"&&<AdminView company={company} trips={trips} expenses={expenses} revenues={revenues} onSaved={reloadData}/>}</>}</div>
+      <div className="mx-auto max-w-[1500px] p-4 sm:p-7 lg:p-9">{sessionExpired && !error ? <SessionExpiredBanner /> : null}{loading ? <Loading /> : error ? <ErrorState message={error} retry={reloadData} session={sessionExpired} /> : <>{view === "painel" && <DashboardView revenue={revenue} costs={costs} profit={profit} margin={margin} totalKm={totalKm} trips={filteredTrips} monthly={monthly} expenseBreakdown={expenseBreakdown} profitByTrip={profitByTrip} onTrip={() => {setEditing(null);setTripOpen(true);}} />}{view === "viagens" && <TripsView trips={filteredTrips} search={search} setSearch={setSearch} onEdit={(trip)=>{setEditing(trip);setTripOpen(true);}} onRemove={(id) => remove("trip", id)} />}{view === "financeiro" && <><FinanceView onEdit={(item:Expense)=>setFinanceEditing({kind:"expense",item})} onRevenue={()=>setRevenueOpen(true)} expenses={filteredExpenses} breakdown={expenseBreakdown} monthly={monthly} revenue={revenue} costs={costs} profit={profit} onCreate={() => setExpenseOpen(true)} onRemove={(id:string) => remove("expense", id)} /><RevenueList onEdit={item=>setFinanceEditing({kind:"revenue",item})} items={filteredRevenues} onRemove={id=>remove("revenue",id)}/></>}{view === "rotas" && <RoutesView routes={routeRanking} />}{view === "clientes" && <ClientsView clients={clientSummary} />}{view==="admin"&&<AdminView company={company} trips={trips} expenses={expenses} revenues={revenues} onSaved={reloadData}/>}</>}</div>
     </main>
     <nav className="mobile-navigation fixed inset-x-3 bottom-3 z-30 grid grid-cols-6 rounded-2xl border border-white/40 bg-[#10251f]/95 p-1.5 text-white shadow-2xl backdrop-blur-xl lg:hidden" aria-label="Navegação mobile">{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] ${view === item.id ? "bg-[#f4a825] font-bold text-[#10251f]" : "text-white/65"}`}><Icon className="size-5" />{item.label}</button>; })}</nav>
     <FinanceEditDialog record={financeEditing} onClose={()=>setFinanceEditing(null)} onSaved={reloadData}/><RevenueDialog open={revenueOpen} setOpen={setRevenueOpen} onSaved={reloadData}/><ExpenseDialog open={expenseOpen} setOpen={setExpenseOpen} saving={saving} category={expenseCategory} setCategory={setExpenseCategory} onSubmit={submitExpense} />
@@ -172,7 +181,8 @@ function SectionHeader({ title, subtitle, action }: { title: string; subtitle: s
 function SmallStat({ label, value, result }: { label: string; value: string; result?: number }) { return <div className="rounded-xl bg-[#f3f6f4] p-3"><p className="text-[12px] text-[#718078]">{label}</p><p className={`mt-1 truncate text-sm font-bold ${result!==undefined?resultClass(result):""}`}>{value}</p></div>; }
 function EmptyList({ icon: Icon, text }: { icon: typeof Truck; text: string }) { return <div className="grid min-h-64 place-items-center rounded-[22px] border border-dashed bg-white p-8 text-center text-[#718078]"><div><Icon className="mx-auto mb-3 size-10 opacity-40" /><p>{text}</p></div></div>; }
 function Loading() { return <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[1,2,3,4].map((item) => <div key={item} className="h-40 animate-pulse rounded-[22px] bg-white" />)}</div>; }
-function ErrorState({ message, retry, session }: { message: string; retry: () => void; session?: boolean }) { return <div className="grid min-h-[55vh] place-items-center text-center"><div className="max-w-md"><ReceiptText className="mx-auto mb-4 size-11 text-red-500" /><h2 className="text-xl font-bold">Dados indisponíveis</h2><p className="mt-2 text-[#718078]">{message}</p><div className="mt-5 flex flex-wrap justify-center gap-2">{session ? <Button asChild variant="outline"><a href="/signin-with-chatgpt?return_to=%2F">Entrar novamente</a></Button> : null}<Button onClick={retry}>Tentar novamente</Button></div></div></div>; }
+function ErrorState({ message, retry, session }: { message: string; retry: () => void; session?: boolean }) { return <div className="grid min-h-[55vh] place-items-center text-center"><div className="max-w-md"><ReceiptText className="mx-auto mb-4 size-11 text-red-500" /><h2 className="text-xl font-bold">Dados indisponíveis</h2><p className="mt-2 text-[#718078]">{message}</p><div className="mt-5 flex flex-wrap justify-center gap-2">{session ? <Button asChild variant="outline"><a href={SIGN_IN_URL}>Entrar novamente</a></Button> : null}<Button onClick={retry}>Tentar novamente</Button></div></div></div>; }
+function SessionExpiredBanner() { return <div role="alert" className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"><span><strong>Sessão expirada.</strong> Entre novamente para continuar acessando seus dados.</span><Button asChild variant="outline" className="shrink-0 bg-white"><a href={SIGN_IN_URL}>Entrar novamente</a></Button></div>; }
 function Field({ label, name, type = "text", placeholder, required, step }: { label: string; name: string; type?: string; placeholder?: string; required?: boolean; step?: string }) { return <label className="space-y-2 text-sm font-semibold text-[#34443e]"><span>{label}</span><Input name={name} type={type} placeholder={placeholder} required={required} step={step} min={type === "number" ? 0 : undefined} className="h-11 rounded-xl bg-white" /></label>; }
 
 function ExpenseDialog({ open, setOpen, saving, category, setCategory, onSubmit }: { open: boolean; setOpen: (v: boolean) => void; saving: boolean; category: string; setCategory: (v: string) => void; onSubmit: (e: FormEvent<HTMLFormElement>) => void }) { return <Dialog open={open} onOpenChange={setOpen}><DialogContent className="rounded-[22px] sm:max-w-lg"><DialogHeader><DialogTitle>Nova despesa</DialogTitle><DialogDescription>Registre custos fora de uma viagem específica.</DialogDescription></DialogHeader><form onSubmit={onSubmit} className="space-y-4"><Field label="Data" name="expenseDate" type="date" required /><label className="space-y-2 text-sm font-semibold"><span>Categoria</span><Select value={category} onValueChange={(value) => value && setCategory(value)}><SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{["Manutenção", "Alimentação", "Hospedagem", "Lavagem", "Estacionamento", "Seguro", "Outros"].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></label><Field label="Descrição" name="description" placeholder="Ex.: Troca de pneu" required /><Field label="Valor" name="amount" type="number" step="0.01" required /><DialogFooter><Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? "Salvando..." : "Salvar despesa"}</Button></DialogFooter></form></DialogContent></Dialog>; }
