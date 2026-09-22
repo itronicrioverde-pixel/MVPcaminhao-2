@@ -16,7 +16,7 @@ import {httpApi,ApiError} from "@/lib/api-client";
 import {driverCommission,type Trip,type Expense,type Revenue,type Company} from "@/lib/finance";
 import {parseRecordsPayload} from "@/lib/records-payload";
 import {saveThenRefresh,errorMessage,REFRESH_FAILED_MESSAGE,DELETE_REFRESH_FAILED_MESSAGE} from "@/lib/records-save";
-import {createMountState,createLatestRequest} from "@/lib/records-load";
+import {createMountState,createLatestRequest,canApplyResponse} from "@/lib/records-load";
 type View = "painel" | "viagens" | "financeiro" | "rotas" | "clientes" | "admin";
 type MonthlyPoint = { month: string; Faturamento: number; Despesas: number; Resultado: number };
 type Slice = { name: string; value: number };
@@ -74,12 +74,12 @@ export default function DashboardClient({ displayName }: { displayName: string }
     try {
       const parsed = parseRecordsPayload(await httpApi.get<unknown>("/api/records"));
       if (!parsed) throw new Error("O servidor retornou dados inesperados. Recarregue a página e tente novamente.");
-      if (!mountedRef.current || !latestRequestRef.current.isCurrent(seq)) return false;
+      if (!canApplyResponse(mountedRef.current, latestRequestRef.current, seq)) return false;
       setTrips(parsed.trips); setExpenses(parsed.expenses); setRevenues(parsed.revenues); setCompany(parsed.company); setError(""); setSessionExpired(false);
       hasLoaded.current = true;
       return true;
     } catch (err) {
-      if (!mountedRef.current || !latestRequestRef.current.isCurrent(seq)) return false;
+      if (!canApplyResponse(mountedRef.current, latestRequestRef.current, seq)) return false;
       const message = err instanceof Error ? err.message : "Falha ao carregar os dados.";
       if (err instanceof ApiError && err.status === 401) setSessionExpired(true);
       if (hasLoaded.current) {
@@ -92,7 +92,7 @@ export default function DashboardClient({ displayName }: { displayName: string }
         setError(message);
       }
       return false;
-    } finally { if (mountedRef.current && latestRequestRef.current.isCurrent(seq)) setLoading(false); }
+    } finally { if (canApplyResponse(mountedRef.current, latestRequestRef.current, seq)) setLoading(false); }
   }, []);
   const reloadData = useCallback(async () => { return loadData(); }, [loadData]);
   useEffect(() => { reloadRef.current = reloadData; });

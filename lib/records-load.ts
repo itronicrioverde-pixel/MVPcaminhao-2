@@ -34,3 +34,7 @@ export function createLatestRequest(): LatestRequest {
     isCurrent: (id: number) => id === seq,
   };
 }
+
+export function canApplyResponse(mountState: MountState, latestRequest: LatestRequest, sequence: number): boolean {
+  return mountState.current && latestRequest.isCurrent(sequence);
+}

@@ -13,8 +13,8 @@ const expenseA={id:'E1',expenseDate:'2026-01-06',category:'Manutenção',descrip
 const revenueA={id:'R1',revenueDate:'2026-01-07',category:'Reembolso',description:'Extra',amount:200};
 try{
  const {parseRecordsPayload}=await import(pathToFileURL(await compile('lib/records-payload.ts')));
- const {saveThenRefresh,errorMessage,REFRESH_FAILED_MESSAGE,DELETE_REFRESH_FAILED_MESSAGE}=await import(pathToFileURL(await compile('lib/records-save.ts')));
- const {createMountState,createLatestRequest}=await import(pathToFileURL(await compile('lib/records-load.ts')));
+ const {saveThenRefresh,errorMessage,REFRESH_FAILED_MESSAGE,DELETE_REFRESH_FAILED_MESSAGE,tripSaveFeedback}=await import(pathToFileURL(await compile('lib/records-save.ts')));
+ const {createMountState,createLatestRequest,canApplyResponse}=await import(pathToFileURL(await compile('lib/records-load.ts')));
  assert.ok(parseRecordsPayload({trips:[tripA],expenses:[expenseA],revenues:[revenueA],company}),'payload completo válido passa');
  names.push('payload completo válido é aceito');
  const d1={trips:[{...tripA,ownerId:'u-owner',createdAt:'2026-01-05 09:30:00'}],expenses:[{...expenseA,ownerId:'u-owner',createdAt:'2026-01-06 10:00:00'}],revenues:[{...revenueA,ownerId:'u-owner',createdAt:'2026-01-07 11:00:00'}],company:{...company,logoKey:'logo/rota.png',ownerId:'u-owner',createdAt:'2026-01-01 00:00:00'}};
@@ -26,9 +26,13 @@ try{
  assert.ok(!('ownerId' in real.revenues[0])&&!('createdAt' in real.revenues[0]),'ownerId e createdAt removidos das receitas');
  assert.ok(!('ownerId' in real.company)&&!('createdAt' in real.company),'ownerId e createdAt removidos da empresa');
  assert.equal(real.company.logoKey,'logo/rota.png','logoKey preservada como string');
- names.push('resposta real do D1 é aceita e os metadados são removidos');
- assert.equal(parseRecordsPayload({trips:[tripA],expenses:[expenseA],revenues:[revenueA],company:{...company,logoKey:null}}).company.logoKey,null,'logoKey null é preservada');
- assert.equal(parseRecordsPayload({trips:[tripA],expenses:[expenseA],revenues:[revenueA],company}).company.logoKey,undefined,'logoKey ausente permanece undefined e é aceita');
+ names.push('resposta real do D1 é aceita e ownerId/createdAt são removidos');
+ const k1=parseRecordsPayload({trips:[tripA],expenses:[expenseA],revenues:[revenueA],company:{...company,logoKey:'logo.png'}});
+ const k2=parseRecordsPayload({trips:[tripA],expenses:[expenseA],revenues:[revenueA],company:{...company,logoKey:null}});
+ const k3=parseRecordsPayload({trips:[tripA],expenses:[expenseA],revenues:[revenueA],company});
+ assert.equal(k1.company.logoKey,'logo.png','logoKey string é preservada');
+ assert.equal(k2.company.logoKey,null,'logoKey null é preservada');
+ assert.equal(k3.company.logoKey,undefined,'logoKey ausente permanece undefined e é aceita');
  names.push('logoKey string, null e ausente são aceitas e preservadas');
  const numerico=parseRecordsPayload({trips:[{...tripA,freight:'200000',km:'480',diesel:'1200',extras:'90'}],expenses:[{...expenseA,amount:'150.5'}],revenues:[{...revenueA,amount:'200'}],company});
  assert.ok(numerico,'strings numéricas coercíveis são aceitas');
@@ -37,73 +41,90 @@ try{
  assert.equal(typeof numerico.trips[0].extras,'number');assert.equal(numerico.trips[0].extras,90);
  assert.equal(typeof numerico.expenses[0].amount,'number');assert.equal(numerico.expenses[0].amount,150.5);
  assert.equal(typeof numerico.revenues[0].amount,'number');assert.equal(numerico.revenues[0].amount,200);
- names.push('strings numéricas nunca permanecem como string após o parse');
+ names.push('strings numéricas retornam como number após o parse');
  const semId={...tripA};delete semId.id;
  const semExtras={...tripA};delete semExtras.extras;
  const casos=[
-  [undefined,'corpo vazio'],
-  ['<html>...</html>','HTML'],
-  [{},'objeto sem arrays e sem empresa'],
-  [{trips:[],expenses:[],revenues:[],company:null},'empresa nula'],
-  [{trips:[],expenses:[],company},'array de receitas ausente'],
-  [{trips:[],expenses:[],revenues:[],company:{name:'',cnpj:''}},'empresa sem nome'],
-  [{trips:[],expenses:[],revenues:[],company:{name:'X'}},'empresa incompleta'],
-  [{trips:[null],expenses:[],revenues:[],company},'viagem nula'],
-  [{trips:[semId],expenses:[],revenues:[],company},'viagem sem id'],
-  [{trips:[semExtras],expenses:[],revenues:[],company},'viagem sem extras'],
-  [{trips:[{...tripA,id:''}],expenses:[],revenues:[],company},'viagem com id vazio'],
-  [{trips:[{...tripA,tripDate:'ontem'}],expenses:[],revenues:[],company},'data inválida'],
-  [{trips:[{...tripA,freight:NaN}],expenses:[],revenues:[],company},'frete NaN'],
-  [{trips:[{...tripA,freight:Infinity}],expenses:[],revenues:[],company},'frete infinito'],
-  [{trips:[{...tripA,freight:'ab'}],expenses:[],revenues:[],company},'frete não numérico'],
-  [{trips:[{...tripA,extraItems:[{category:'',amount:50}]}],expenses:[],revenues:[],company},'extra com categoria vazia'],
-  [{trips:[{...tripA,extraItems:[{category:'Ajudante',amount:Infinity}]}],expenses:[],revenues:[],company},'extra com valor infinito'],
-  [{trips:[],expenses:[{expenseDate:'2026-01-06',category:'Manutenção',description:'Pneus'}],revenues:[],company},'despesa sem valor'],
-  [{trips:[],expenses:[{expenseDate:'2026-01-06',category:'Manutenção',amount:150}],revenues:[],company},'despesa sem descrição'],
-  [{trips:[],expenses:[{...expenseA,id:''}],revenues:[],company},'despesa com id vazio'],
-  [{trips:[],expenses:[],revenues:[{revenueDate:'2026-01-07',category:'Reembolso',description:'Extra',amount:-5}],company},'receita com valor negativo'],
-  [{trips:[],expenses:[],revenues:[{revenueDate:'2026-01-07',category:'Reembolso',amount:200}],company},'receita sem descrição'],
-  [{trips:[],expenses:[],revenues:[{...revenueA,amount:Infinity}],company},'receita com valor infinito']
- ];
- for(const [payload,label] of casos)assert.equal(parseRecordsPayload(payload),null,'rejeitado: '+label);
- names.push('payload incompleto ou inválido é rejeitado ('+casos.length+' casos)');
- let saveCount=0,refreshCount=0,closeCalled=0,onSaveFailedCalled=0;
- const saveFail=await saveThenRefresh({save:async()=>{saveCount++;throw new Error('falha no POST');},refresh:async()=>{refreshCount++;return true;},close:()=>{closeCalled++;},onSaveFailed:()=>{onSaveFailedCalled++;}});
+  undefined,'corpo vazio','<html>...</html>','HTML',{},'objeto sem arrays e sem empresa',{trips:[],expenses:[],revenues:[],company:null},'empresa nula',{trips:[],expenses:[],company},'array de receitas ausente',{trips:[],expenses:[],revenues:[],company:{name:'',cnpj:''}},'empresa sem nome',{trips:[],expenses:[],revenues:[],company:{name:'X'}},'empresa incompleta',{trips:[null],expenses:[],revenues:[],company},'viagem nula',{trips:[semId],expenses:[],revenues:[],company},'viagem sem id',{trips:[semExtras],expenses:[],revenues:[],company},'viagem sem extras',{trips:[{...tripA,id:''}],expenses:[],revenues:[],company},'viagem com id vazio',{trips:[{...tripA,tripDate:'ontem'}],expenses:[],revenues:[],company},'data inválida',{trips:[{...tripA,freight:NaN}],expenses:[],revenues:[],company},'frete NaN',{trips:[{...tripA,freight:Infinity}],expenses:[],revenues:[],company},'frete infinito',{trips:[{...tripA,freight:'ab'}],expenses:[],revenues:[],company},'frete não numérico',{trips:[{...tripA,extraItems:[{category:'',amount:50}]}],expenses:[],revenues:[],company},'extra com categoria vazia',{trips:[{...tripA,extraItems:[{category:'Ajudante',amount:Infinity}]}],expenses:[],revenues:[],company},'extra com valor infinito',{trips:[],expenses:[{expenseDate:'2026-01-06',category:'Manutenção',description:'Pneus'}],revenues:[],company},'despesa sem valor',{trips:[],expenses:[{expenseDate:'2026-01-06',category:'Manutenção',amount:150}],revenues:[],company},'despesa sem descrição',{trips:[],expenses:[{...expenseA,id:''}],revenues:[],company},'despesa com id vazio',{trips:[],expenses:[],revenues:[{revenueDate:'2026-01-07',category:'Reembolso',description:'Extra',amount:-5}],company},'receita com valor negativo',{trips:[],expenses:[],revenues:[{revenueDate:'2026-01-07',category:'Reembolso',amount:200}],company},'receita sem descrição',{trips:[],expenses:[],revenues:[{...revenueA,amount:Infinity}],company},'receita com valor infinito'];
+ for(let i=0;i<casos.length;i+=2)assert.equal(parseRecordsPayload(casos[i]),null,'rejeitado: '+casos[i+1]);
+ names.push('payload incompleto ou inválido é rejeitado ('+casos.length/2+' casos)');
+ const mUnmount=createMountState(false);const lUnmount=createLatestRequest();
+ mUnmount.mount();const seqU=lUnmount.begin();mUnmount.unmount();
+ let estado='inicial';
+ if(canApplyResponse(mUnmount,lUnmount,seqU))estado='aplicado';
+ assert.equal(estado,'inicial','resposta concluída depois do unmount não atualiza estado');
+ assert.equal(canApplyResponse(mUnmount,lUnmount,seqU),false);
+ names.push('resposta concluída depois do unmount não atualiza estado');
+ const mAntiga=createMountState(false);const lAntiga=createLatestRequest();
+ mAntiga.mount();const antiga=lAntiga.begin();const atual=lAntiga.begin();
+ let aplicado='nenhum';
+ if(canApplyResponse(mAntiga,lAntiga,antiga))aplicado='antiga';
+ if(canApplyResponse(mAntiga,lAntiga,atual))aplicado='atual';
+ assert.equal(aplicado,'atual','resposta antiga não atualiza estado');assert.equal(canApplyResponse(mAntiga,lAntiga,antiga),false);
+ names.push('resposta antiga não atualiza estado');
+ const mStrict=createMountState(false);const lStrict=createLatestRequest();
+ mStrict.mount();mStrict.unmount();mStrict.mount();
+ const seqStrict=lStrict.begin();
+ assert.equal(canApplyResponse(mStrict,lStrict,seqStrict),true,'remontagem do StrictMode volta a permitir atualização');
+ names.push('remontagem do StrictMode volta a permitir atualização');
+ const mLoading=createMountState(false);const lLoading=createLatestRequest();
+ mLoading.mount();let loading=true;
+ const p1=lLoading.begin(),p2=lLoading.begin();
+ if(canApplyResponse(mLoading,lLoading,p1))loading=false;
+ assert.equal(loading,true,'resposta antiga não retira o loading');
+ if(canApplyResponse(mLoading,lLoading,p2))loading=false;
+ assert.equal(loading,false,'somente a requisição mais recente retira o loading');
+ names.push('somente a requisição mais recente pode retirar o loading');
+ let saveCount=0,refreshCount=0,closeCalled=0,onSaveFailedCalls=0;
+ const saveFail=await saveThenRefresh({save:async()=>{saveCount++;throw new Error('falha no POST');},refresh:async()=>{refreshCount++;return true;},close:()=>{closeCalled++;},onSaveFailed:()=>{onSaveFailedCalls++;}});
  assert.equal(saveFail.saved,false,'falha de salvamento não marca como salvo');
  assert.equal(refreshCount,0,'save falhou: não executa refresh');
- assert.equal(closeCalled,0,'save falhou: diálogo permanece aberto (rascunho preservado)');
- assert.equal(onSaveFailedCalled,1,'falha de salvamento é exibida');
+ assert.equal(closeCalled,0,'save falhou: diálogo permanece aberto');
+ assert.equal(onSaveFailedCalls,1,'callback de falha chamado exatamente uma vez quando o save falha');
  assert.equal(errorMessage(new Error('falha no POST')),'falha no POST');
  assert.equal(errorMessage(undefined),'Não foi possível concluir a operação. Tente novamente.');
+ names.push('save falhou: não fecha o diálogo e não executa refresh');
  const refreshFn=async()=>{refreshCount++;if(refreshCount===1)throw new Error('rede caiu');return true;};
- const refreshFail=await saveThenRefresh({save:async()=>{saveCount++;},refresh:refreshFn,close:()=>{closeCalled++;},onSaveFailed:onSaveFailedCalled++});
+ const refreshFail=await saveThenRefresh({save:async()=>{saveCount++;},refresh:refreshFn,close:()=>{closeCalled++;},onSaveFailed:()=>{onSaveFailedCalls++;}});
  assert.deepEqual(refreshFail,{saved:true,refreshed:false},'atualização com falha é reportada sem fingir que salvou de novo');
- assert.equal(saveCount,2,'save funcionou e refresh falhou: o save não é repetido');
- assert.equal(closeCalled,1,'save ok + refresh falhou: diálogo é fechado na mesma');
+ assert.equal(saveCount,2,'save ok + refresh falho: o save não é repetido');
+ assert.equal(closeCalled,1,'save ok + refresh falho: diálogo fechado');
+ assert.equal(onSaveFailedCalls,1,'callback de falha não é chamado quando o save funciona');
  assert.equal(REFRESH_FAILED_MESSAGE,'Registro salvo, mas a tela não pôde ser atualizada');
  assert.equal(DELETE_REFRESH_FAILED_MESSAGE,'Registro excluído, mas a tela não pôde ser atualizada');
  const retry=await refreshFn();
- assert.equal(retry,true,'retry (somente refresh/get) consegue atualizar a tela');
+ assert.equal(retry,true,'retry (somente refresh) consegue atualizar a tela');
  assert.equal(saveCount,2,'retry não repete o salvamento');
  assert.equal(refreshCount,2,'retry executa somente o refresh');
- names.push('falha de save mantém diálogo; save ok + refresh falho não repete o save e retry só atualiza');
+ names.push('save ok + refresh falho: não repete o save, fecha o diálogo e retry só atualiza');
+ let refreshFinished=false;
+ const readyRef={resolve:null};let closeEarly=false;
+ const pendingRefresh=new Promise(r=>{readyRef.resolve=r;}).then(()=>{refreshFinished=true;return true;});
+ const pendente=saveThenRefresh({save:async()=>{},refresh:()=>pendingRefresh,close:()=>{closeEarly=true;},onSaveFailed:()=>{}});
+ await new Promise(r=>setTimeout(r,0));
+ assert.equal(closeEarly,true,'close() chamado imediatamente após salvar, antes de o refresh terminar');
+ assert.equal(refreshFinished,false,'o refresh ainda não terminou quando o diálogo já foi fechado');
+ readyRef.resolve(true);
+ assert.deepEqual(await pendente,{saved:true,refreshed:true});
+ names.push('close() é chamado imediatamente após salvar, antes de o refresh terminar');
  let deleteCount=0,refreshAfterDelete=0;
  const del=await saveThenRefresh({save:async()=>{deleteCount++;throw new Error('falha na exclusão');},refresh:async()=>{refreshAfterDelete++;return true;},close:()=>{},onSaveFailed:()=>{}});
- assert.equal(del.saved,false);assert.equal(refreshAfterDelete,0,'delete falhou: não executa refresh');
- assert.equal(deleteCount,1);
+ assert.equal(del.saved,false);assert.equal(refreshAfterDelete,0,'delete falhou: não executa refresh');assert.equal(deleteCount,1);
  names.push('delete falhou: não executa refresh');
- const latest=createLatestRequest();
- const primeiro=latest.begin(),segundo=latest.begin();
- assert.equal(latest.isCurrent(segundo),true,'requisição mais recente pode alterar o estado');
- assert.equal(latest.isCurrent(primeiro),false,'somente a requisição mais recente altera o estado');
- names.push('duas requisições concorrentes: somente a mais recente altera o estado');
- const strict=createMountState(false);
- strict.mount();strict.unmount();strict.mount();
- assert.equal(strict.current,true,'Strict Mode (montar, desmontar e montar de novo) continua funcionando');
- const stale=createMountState(false);const staleLatest=createLatestRequest();
- stale.mount();const seq=staleLatest.begin();stale.unmount();
- assert.equal(stale.current&&staleLatest.isCurrent(seq),false,'resposta concluída depois do unmount não altera o estado');
- assert.equal(stale.current,false);
- names.push('montagem/desmontagem do Strict Mode e resposta tardia após unmount são respeitadas');
- console.log('PASS: '+names.join('; ')+'.');
+ let saveTrip=0;
+ const tripLoss=await saveThenRefresh({save:async()=>{saveTrip++;},refresh:async()=>{throw new Error('rede caiu');},close:()=>{},onSaveFailed:()=>{}});
+ const feedback={loss:0,success:0,error:0};
+ tripSaveFeedback({saved:tripLoss.saved,refreshed:tripLoss.refreshed,alert:true,onLossAlert:()=>{feedback.loss++;},onSuccess:()=>{feedback.success++;},onRefreshError:(msg)=>{feedback.error++;assert.equal(msg,REFRESH_FAILED_MESSAGE,'mensagem específica de atualização');}});
+ assert.equal(tripLoss.saved,true);assert.equal(tripLoss.refreshed,false);
+ assert.equal(feedback.loss,1,'viagem com prejuízo salva + refresh falho: alerta de prejuízo é aberto');
+ assert.equal(feedback.success,0);
+ assert.equal(feedback.error,1,'viagem com prejuízo salva + refresh falho: informa que a tela não pôde ser atualizada');
+ assert.equal(saveTrip,1,'salvamento da viagem nunca é repetido');
+ const semPrejuizo=await saveThenRefresh({save:async()=>{saveTrip++;},refresh:async()=>true,close:()=>{},onSaveFailed:()=>{}});
+ const fb2={loss:0,success:0,error:0};
+ tripSaveFeedback({saved:semPrejuizo.saved,refreshed:semPrejuizo.refreshed,alert:false,onLossAlert:()=>{fb2.loss++;},onSuccess:()=>{fb2.success++;},onRefreshError:()=>{fb2.error++;}});
+ assert.equal(fb2.success,1,'viagem sem prejuízo + refresh ok: confirma o salvamento');assert.equal(fb2.loss,0);assert.equal(fb2.error,0);
+ assert.equal(saveTrip,2);
+ names.push('viagem com prejuízo salva + refresh falhou abre o alerta e informa a atualização');
+ console.log('PASS ('+names.length+' grupos): '+names.join('; ')+'.');
 }finally{await rm(temp,{recursive:true,force:true});}
