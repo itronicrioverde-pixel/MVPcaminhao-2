@@ -37,5 +37,11 @@ jobs:
       - name: Test API error envelope
         run: node scripts/test-api-errors.mjs
 
+      - name: Test UI flows and form state
+        run: node scripts/test-ui-flows.mjs
+
+      - name: Test records payload and save/load flows
+        run: node scripts/test-records-flow.mjs
+
       - name: Build
         run: npm run build

@@ -14,7 +14,9 @@ import { Toaster } from "@/components/ui/sonner";
 import {FinanceEditDialog,TripEditor,RevenueDialog,RevenueList,AdminView} from "./management";
 import {httpApi,ApiError} from "@/lib/api-client";
 import {driverCommission,type Trip,type Expense,type Revenue,type Company} from "@/lib/finance";
-import {isRecordsPayload} from "@/lib/records-payload";
+import {parseRecordsPayload} from "@/lib/records-payload";
+import {saveThenRefresh,errorMessage,REFRESH_FAILED_MESSAGE,DELETE_REFRESH_FAILED_MESSAGE} from "@/lib/records-save";
+import {createMountState,createLatestRequest} from "@/lib/records-load";
 type View = "painel" | "viagens" | "financeiro" | "rotas" | "clientes" | "admin";
 type MonthlyPoint = { month: string; Faturamento: number; Despesas: number; Resultado: number };
 type Slice = { name: string; value: number };
@@ -62,20 +64,22 @@ export default function DashboardClient({ displayName }: { displayName: string }
   const [expenseCategory, setExpenseCategory] = useState("Manutenção");
   const [search, setSearch] = useState("");
   const hasLoaded = useRef(false);
-  const mounted = useRef(true);
+  const mountedRef = useRef(createMountState(false));
+  const latestRequestRef = useRef(createLatestRequest());
   const [sessionExpired, setSessionExpired] = useState(false);
-  useEffect(() => () => { mounted.current = false; }, []);
-  const reloadRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => { const m = mountedRef.current; m.mount(); return () => { m.unmount(); }; }, []);
+  const reloadRef = useRef<() => Promise<boolean>>(async () => false);
   const loadData = useCallback(async () => {
+    const seq = latestRequestRef.current.begin();
     try {
-      const data = await httpApi.get<unknown>("/api/records");
-      if (!isRecordsPayload(data)) throw new Error("O servidor retornou dados inesperados. Recarregue a página e tente novamente.");
-      if (!mounted.current) return false;
-      setTrips(data.trips); setExpenses(data.expenses); setRevenues(data.revenues); setCompany(data.company); setError(""); setSessionExpired(false);
+      const parsed = parseRecordsPayload(await httpApi.get<unknown>("/api/records"));
+      if (!parsed) throw new Error("O servidor retornou dados inesperados. Recarregue a página e tente novamente.");
+      if (!mountedRef.current || !latestRequestRef.current.isCurrent(seq)) return false;
+      setTrips(parsed.trips); setExpenses(parsed.expenses); setRevenues(parsed.revenues); setCompany(parsed.company); setError(""); setSessionExpired(false);
       hasLoaded.current = true;
       return true;
     } catch (err) {
-      if (!mounted.current) return false;
+      if (!mountedRef.current || !latestRequestRef.current.isCurrent(seq)) return false;
       const message = err instanceof Error ? err.message : "Falha ao carregar os dados.";
       if (err instanceof ApiError && err.status === 401) setSessionExpired(true);
       if (hasLoaded.current) {
@@ -88,9 +92,9 @@ export default function DashboardClient({ displayName }: { displayName: string }
         setError(message);
       }
       return false;
-    } finally { if (mounted.current) setLoading(false); }
+    } finally { if (mountedRef.current && latestRequestRef.current.isCurrent(seq)) setLoading(false); }
   }, []);
-  const reloadData = useCallback(async () => { await loadData(); }, [loadData]);
+  const reloadData = useCallback(async () => { return loadData(); }, [loadData]);
   useEffect(() => { reloadRef.current = reloadData; });
   useEffect(() => { const id = requestAnimationFrame(() => { void reloadRef.current(); }); return () => cancelAnimationFrame(id); }, []);
 
@@ -131,13 +135,20 @@ export default function DashboardClient({ displayName }: { displayName: string }
 
   async function submitExpense(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setSaving(true);
-    try { const payload = { ...Object.fromEntries(new FormData(event.currentTarget).entries()), kind: "expense", category: expenseCategory }; await httpApi.post("/api/records", payload); setExpenseOpen(false); await reloadData(); toast.success("Despesa salva com sucesso."); }
-    catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível salvar."); } finally { setSaving(false); }
+    try {
+      const payload = { ...Object.fromEntries(new FormData(event.currentTarget).entries()), kind: "expense", category: expenseCategory };
+      const result = await saveThenRefresh({ save: () => httpApi.post("/api/records", payload), refresh: reloadData, close: () => setExpenseOpen(false), onSaveFailed: (err) => toast.error(errorMessage(err)) });
+      if (!result.saved) return;
+      if (result.refreshed) toast.success("Despesa salva com sucesso.");
+      else toast.error(REFRESH_FAILED_MESSAGE, { action: { label: "Atualizar", onClick: () => { void reloadData(); } } });
+    } finally { setSaving(false); }
   }
   async function remove(kind: "trip" | "expense" | "revenue", id: string) {
     if (!confirm("Deseja excluir este registro?")) return;
-    try { await httpApi.del(`/api/records?kind=${kind}&id=${encodeURIComponent(id)}`); await reloadData(); toast.success("Registro excluído."); }
-    catch (err) { toast.error(err instanceof Error ? err.message : "Não foi possível excluir."); }
+    const result = await saveThenRefresh({ save: () => httpApi.del(`/api/records?kind=${kind}&id=${encodeURIComponent(id)}`), refresh: reloadData, close: () => {}, onSaveFailed: (err) => toast.error(errorMessage(err)) });
+    if (!result.saved) return;
+    if (result.refreshed) toast.success("Registro excluído.");
+    else toast.error(DELETE_REFRESH_FAILED_MESSAGE, { action: { label: "Atualizar", onClick: () => { void reloadData(); } } });
   }
 
   return <div className="app-shell bg-[#f2f4f3] text-[#17201d]">

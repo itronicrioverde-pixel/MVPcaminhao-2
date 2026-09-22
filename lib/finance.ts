@@ -1,7 +1,7 @@
 import { z } from "zod";
 const label=z.string().trim().min(1).max(200);
 export const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!isNaN(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v,"Data inválida");
-const amount=z.coerce.number().finite().min(0).max(1e9);
+export const amount=z.coerce.number().finite().min(0).max(1e9);
 export const extraItem=z.object({category:label,amount});
 export const tripSchema=z.object({tripDate:date,origin:label,destination:label,clientName:z.string().max(200).default("Cliente não informado"),cargoType:z.string().max(200).default("Carga geral"),freight:amount,freightPerTon:amount.nullable().default(null),lossAlertPercent:z.coerce.number().finite().min(0).max(1000).default(10),driverPercent:z.coerce.number().finite().min(0).max(100).default(0),km:amount.transform(Math.round),diesel:amount.default(0),toll:amount.default(0),oil:amount.default(0),extraItems:z.array(extraItem).max(50).default([]),axles:z.coerce.number().int().min(2).max(9).default(6),loadedWeight:z.preprocess(v=>v===""||v==null?null:v,amount.nullable()),deliveredWeight:z.preprocess(v=>v===""||v==null?null:v,amount.nullable()),status:z.string().max(80).default("Concluído"),notes:z.string().max(2000).default("")});
 export const expenseSchema=z.object({expenseDate:date,category:label,description:label,amount});

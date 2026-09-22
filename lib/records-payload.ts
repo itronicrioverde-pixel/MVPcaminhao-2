@@ -1,12 +1,20 @@
+import { z } from "zod";
+import { tripSchema, expenseSchema, revenueSchema, companySchema, amount } from "./finance";
 import type { Trip, Expense, Revenue, Company } from "./finance";
+
+const id = z.string().min(1).max(300);
+const logoKey = z.string().nullable().optional();
+
+export const recordsPayloadSchema = z.object({
+  trips: z.array(tripSchema.extend({ id }).extend({ extras: amount })),
+  expenses: z.array(expenseSchema.extend({ id })),
+  revenues: z.array(revenueSchema.extend({ id })),
+  company: companySchema.extend({ logoKey }),
+});
 
 export type RecordsPayload = { trips: Trip[]; expenses: Expense[]; revenues: Revenue[]; company: Company };
 
-export function isRecordsPayload(value: unknown): value is RecordsPayload {
-  if (typeof value !== "object" || value === null) return false;
-  const payload = value as Record<string, unknown>;
-  if (!Array.isArray(payload.trips) || !Array.isArray(payload.expenses) || !Array.isArray(payload.revenues)) return false;
-  const company = payload.company;
-  if (typeof company !== "object" || company === null || typeof (company as { name?: unknown }).name !== "string") return false;
-  return true;
+export function parseRecordsPayload(value: unknown): RecordsPayload | null {
+  const result = recordsPayloadSchema.safeParse(value);
+  return result.success ? result.data : null;
 }
