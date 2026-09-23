@@ -74,10 +74,10 @@ async function fillTripFields(
 ) {
   await dialog.getByLabel("Data").fill(trip.date);
   await dialog.getByLabel("Cliente").fill(trip.client);
-  const origin = dialog.getByLabel("Origem / carregamento");
+  const origin = dialog.getByLabel("Origem / carregamento", { exact: true });
   await origin.click();
   await origin.fill(trip.origin);
-  const destination = dialog.getByLabel("Destino");
+  const destination = dialog.getByLabel("Destino", { exact: true });
   await destination.click();
   await destination.fill(trip.destination);
   await dialog.getByLabel("Valor do frete por tonelada (R$)").fill("250");
@@ -101,6 +101,10 @@ async function createTrip(page: Page, trip: { client: string; origin: string; de
   await expect(dialog).toBeHidden();
 }
 
+function metricCard(page: Page, label: string) {
+  return page.locator(".metric-card").filter({ hasText: label });
+}
+
 function tripRow(page: Page, clientName: string) {
   return page
     .locator("tr:visible, article:visible")
@@ -121,7 +125,7 @@ test.describe("fluxos financeiros no navegador", () => {
   test("painel autenticado carrega com a identidade local", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Painel" })).toBeVisible();
-    await expect(page.getByText("Faturamento", { exact: true })).toBeVisible();
+    await expect(metricCard(page, "Faturamento")).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Navegação principal" })).toBeVisible();
   });
 
@@ -257,7 +261,7 @@ test.describe("fluxos financeiros no navegador", () => {
       return route.continue();
     });
     await page.goto("/");
-    await expect(page.getByText("Faturamento", { exact: true })).toBeVisible();
+    await expect(metricCard(page, "Faturamento")).toBeVisible();
     await createTrip(page, { ...TRIP_A, client: "Cliente E2E Sessao" });
     await expect(page.getByText(/Sessão expirada/i)).toBeVisible();
     await expect(page.getByRole("button", { name: "Entrar novamente" })).toBeVisible();
@@ -289,7 +293,7 @@ test.describe("fluxos financeiros no navegador", () => {
       const side = page.getByRole("navigation", { name: "Navegação principal" });
       await expect(side.getByRole("button", { name: "Clientes" })).toBeVisible();
       await side.getByRole("button", { name: "Viagens" }).click();
-      await expect(page.getByRole("heading", { name: "Viagens" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Viagens", exact: true })).toBeVisible();
     } else {
       await navTo(page, "Financeiro");
       await navTo(page, "Viagens");
@@ -299,7 +303,7 @@ test.describe("fluxos financeiros no navegador", () => {
 
   test("valores e botões principais não ficam cortados", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("Faturamento", { exact: true })).toBeVisible();
+    await expect(metricCard(page, "Faturamento")).toBeVisible();
     await expectInViewport(page.getByRole("button", { name: "Nova viagem" }));
     await expectInViewport(
       page.locator(".metric-card").filter({ hasText: "Faturamento" }).first(),
