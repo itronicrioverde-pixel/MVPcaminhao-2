@@ -4,13 +4,13 @@ Repositório: `itronicrioverde-pixel/MVPcaminhao-2` · Projeto Sites: `.openai/h
 
 ## Estado de verificação
 
-- Aplicação de migrações no D1 de produção acontece na publicação pelo ChatGPT Sites, a partir do diretório `drizzle/` empacotado em `dist/.openai/drizzle` no build. **O passo exato do pipeline não é observável a partir do repositório: a etapa de aplicação em produção está pendente de verificação.**
+- **A aplicação de migrações no D1 de produção não foi observada nem confirmada.** O build empacota `dist/.openai/drizzle/` (7 migrações + `meta/_journal.json`) junto com `hosting.json`, um fato observável no repositório; mas **não há evidência verificável de que o pipeline do Sites aplica essas migrações em produção**. A etapa de aplicação em produção está **pendente de verificação**, e nenhum passo deste runbook presume que ela ocorre automaticamente.
 - Execução prevista para o **proprietário do site**, que tem acesso ao console (`chatgpt.com/sites`) e à sessão autenticada.
 
 ## Premissas verificadas (evidência no repositório)
 
 - `dist/server/wrangler.json` usa `database_id` **placeholder** (`00000000-0000-4000-8000-000000000000`): o D1/R2 reais são injetados pelo controle do ChatGPT Sites somente na publicação. **`wrangler d1 execute DB --remote` NÃO é aplicável/confirmado para produção neste projeto.** Os comandos abaixo usam apenas `--local` (banco de ensaio).
-- O build empacota `dist/.openai/drizzle/` (7 migrações + `meta/_journal.json`) junto com `hosting.json` — é o artefato usado pelo pipeline do Sites ao publicar uma versão.
+- O build empacota `dist/.openai/drizzle/` (7 migrações + `meta/_journal.json`) junto com `hosting.json`. Isso **documenta as migrações no artefato publicado**, mas não demonstra o mecanismo de aplicação em produção.
 - Publicação do Sites tem duas etapas (salvar versão → publicar); cada publicação é produção.
 
 ## 1. Qual banco é o destino e como confirmar a identidade
@@ -40,26 +40,30 @@ PRAGMA index_list('expenses');
 PRAGMA index_list('revenues');
 ```
 
-### Estado por migração (probes de aplicação)
+### Objetos e colunas esperados por migração
 
-| Migração | O que cria | Probe que confirma aplicação |
+| Migração | Objetos/colunas esperados | Sondagem |
 |---|---|---|
-| `0000_narrow_blazing_skull` | `expenses`, `trips` | `trips` e `expenses` existem |
-| `0001_simple_the_order` | índices `idx_*_owner_date` | index_list mostra `idx_trips_owner_date` / `idx_expenses_owner_date` |
-| `0002_sticky_purple_man` | `companies`, `revenues`, índice de revenues; `trips.extra_items`, `trips.axles` | tabelas existem; `table_info('trips')` contém `extra_items` e `axles` |
+| `0000_narrow_blazing_skull` | `trips`, `expenses` | ambas as tabelas existem |
+| `0001_simple_the_order` | `idx_trips_owner_date`, `idx_expenses_owner_date` | index_list mostra os dois índices |
+| `0002_sticky_purple_man` | `companies`, `revenues`, `idx_revenues_owner_date`, `trips.extra_items`, `trips.axles` | tabelas existem; o índice existe; `table_info('trips')` contém `extra_items` **e** `axles` |
 | `0003_tough_pride` | `route_limits` | tabela existe |
 | `0004_melodic_stryfe` | `trips.driver_percent` | coluna presente |
 | `0005_normal_turbo` | `trips.freight_per_ton` | coluna presente |
 | `0006_slimy_mandroid` | `trips.loss_alert_percent` | coluna presente |
 
-## 3. Ordem de aplicação sem repetir
+## 3. Decisão por migração (nunca pular nem repetir arquivos automaticamente)
 
-Ordem canônica = ordem do `drizzle/meta/_journal.json` (`0000` → `0006`). **Nenhuma migração é idempotente** (CREATE TABLE/INDEX e ALTER ADD falham se repetidas). Aplicar uma vez, na ordem, a partir de um baseline conhecido. Antes de aplicar, sondar o esquema (seção 2): qualquer probe já satisfeito (ex.: `trips.loss_alert_percent` presente) indica que a migração correspondente **já foi aplicada** — pular, nunca repetir.
+Ordem canônica = ordem do `drizzle/meta/_journal.json` (`0000` → `0006`). **Nenhuma migração é idempotente** (CREATE TABLE/INDEX e ALTER ADD falham se repetidas). Antes de aplicar um arquivo, verificar **todos** os objetos e colunas esperados da tabela acima (não apenas um):
+
+- **Nenhum objeto/coluna da migração aplicado**: aplicar conforme o procedimento validado (seção 5), somente.
+- **Todos os objetos/colunas aplicados**: registrar a migração como **concluída** (não reaplicar).
+- **Aplicação parcial ou ordem inconsistente** (parte dos objetos existe, migrações anteriores faltando, ou objetos de arquivos posteriores presentes): **PARAR**, diagnosticar a sondagem (seção 2) e usar a recuperação verificada (seção 7). **Não pular e não repetir o arquivo automaticamente** — a regra de uma migração com vários comandos (ex.: `0002`) não pode ser tratada por um único probe.
 
 ## 4. Ponto de recuperação antes da mudança
 
-1. Backup gerenciado pela plataforma (se disponível no console do site) — registrar antes do primeiro deploy com migrações.
-2. Export do app (por usuário): Admin → backup (JSON com records + empresa + logo em base64), guardado fora do site.
+1. Backup gerenciado pela plataforma (se disponível no console do site) — registrar antes do primeiro deploy com migrações. **Até existir um procedimento confirmado na plataforma, o backup integral/restauração integral do D1 permanecem pendentes.**
+2. Export do app (por usuário): Admin → backup (JSON com records + empresa + logo em base64 de **um** usuário), guardado fora do site. **Importante: o backup JSON do app é POR USUÁRIO e não equivale a um backup integral do D1** — não cobre outros usuários, estado de índices nem o `route_limits`; serve apenas como ponto auxiliar de recuperação.
 3. Anotar o SHA da versão salva que contém as migrações (o Sites associa a versão ao commit do build).
 
 ## 5. Ensaio em banco separado (obrigatório antes de publicar)
@@ -70,19 +74,19 @@ Usa um D1 **local separado** (`.wrangler/scratch`), com o artefato já buildado 
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/scratch --file drizzle/0000_narrow_blazing_skull.sql
 ```
 
-Repetir para `0001`…`0006` na ordem (ou em loop com `Get-ChildItem drizzle\*.sql | Sort-Object Name`). Depois, rodar as sondagens da seção 2 e conferir que o schema final bate com `db/schema.ts`.
+Repetir para `0001`…`0006` na ordem (ou em loop com `Get-ChildItem drizzle\*.sql | Sort-Object Name`). Depois, rodar as sondagens da seção 2 e conferir que **todos** os objetos/colunas por migração (tabela da seção 2) e o schema final batem com `db/schema.ts`.
 
-O pipeline local do E2E já executa o mesmo ensaio de baseline vazio automaticamente: `npm run test:e2e:migrate` (e o CI aplica as 7 migrações em `.wrangler/e2e`).
+O pipeline local do E2E já executa o mesmo ensaio de baseline vazio localmente: `npm run test:e2e:migrate` (o CI aplica as 7 migrações em `.wrangler/e2e`, apenas local).
 
 ## 6. Verificação após a aplicação
 
-- Schema: sondagens da seção 2 conferindo o estado final.
+- Schema: sondagens da seção 2 conferindo o estado final (todos os objetos/colunas por migração).
 - Dados preservados (leituras): `SELECT COUNT(*) FROM trips; SELECT COUNT(*) FROM expenses; SELECT COUNT(*) FROM revenues;` e comparação de totais (ex.: `SELECT SUM(freight) FROM trips;`) antes/depois. Na produção, usar os mesmos critérios via verificação comportamental quando a consulta direta não existir.
 - Smoke funcional na versão publicada (login do proprietário): painel com métricas, criar/editar viagem, recarregar (persistência), backup/import, logo, estimativa de rota.
 
 ## 7. Recuperação se uma etapa falhar
 
-- **Falha de DDL no meio do arquivo**: cada statement SQLite é atômico; a falha interrompe o arquivo e o que já executou permanece. **Não reexecutar o arquivo cegamente.**
-- **Diagnóstico**: sondar o esquema (seção 2) para identificar o ponto exato. Nenhuma migração desta base é destrutiva para dados existentes (CREATE + ALTER ADD), então perda de dados é improvável; a falha típica é "já existe" (aplicação repetida).
-- **Rollback**: restaurar o backup gerenciado (se houver) e/ou reimportar os exports do app (seção 4). Para o código, republicar a última boa **versão salva** (código e migrações andam juntos na versão).
-- **Falha por repetição**: se a sondagem já mostra o estado final, não aplicar a migração — a versão seguinte da plataforma já a considera aplicada.
+- **Falha de DDL no meio do arquivo**: cada statement SQLite é atômico; a falha interrompe o arquivo e o que já executou permanece.
+- **Diagnóstico**: sondar o esquema (seção 2) e conferir a tabela de objetos por migração para identificar o ponto exato (aplicação parcial). Regras da seção 3 valem aqui: em caso de ordem inconsistente ou aplicação parcial, **PARAR** e não pular/repetir o arquivo automaticamente.
+- **Rollback**: restaurar o backup gerenciado da plataforma se existir e estiver verificado; senão, reimportar os exports do app por usuário (seção 4) somente como auxiliar. Para o código, republicar a última boa **versão salva**. Backup/restauração integrais permanecem **pendentes até existir procedimento confirmado na plataforma** (seção 4).
+- **Observação**: nenhuma migração desta base é destrutiva para dados existentes (CREATE + ALTER ADD); a falha típica é "já existe" (aplicação repetida) — tratar com a sondagem completa, não com sonegação da aplicação.
