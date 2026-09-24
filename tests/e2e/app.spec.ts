@@ -310,6 +310,7 @@ test.describe("fluxos financeiros no navegador", () => {
     const dialog = await openCreateDialog(page);
     const save = dialog.getByRole("button", { name: "Salvar viagem" });
     await expect(save).toBeVisible();
+    await save.scrollIntoViewIfNeeded();
     await expectInViewport(save);
     await dialog.getByRole("button", { name: "Cancelar" }).click();
   });
