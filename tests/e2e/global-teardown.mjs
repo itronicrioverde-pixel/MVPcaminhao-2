@@ -1,20 +1,8 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { projectRoot } from "../../scripts/e2e-common.mjs";
+import { killTree, projectRoot } from "../../scripts/e2e-common.mjs";
 
 const pidFile = join(projectRoot, ".e2e", "server.json");
-
-function killTree(pid) {
-  if (!pid) return;
-  if (process.platform === "win32") {
-    try { spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" }); } catch { /* best effort */ }
-    return;
-  }
-  for (const target of [-pid, pid]) {
-    try { process.kill(target, "SIGKILL"); } catch { /* já encerrado */ }
-  }
-}
 
 export default async function globalTeardown() {
   if (!existsSync(pidFile)) return;

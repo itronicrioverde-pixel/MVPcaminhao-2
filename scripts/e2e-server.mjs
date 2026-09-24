@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { baseUrl, port, projectRoot, stateDir, wranglerCommand } from "./e2e-common.mjs";
+import { baseUrl, killTree, port, projectRoot, stateDir, wranglerCommand } from "./e2e-common.mjs";
 
 const config = join(projectRoot, "dist", "server", "wrangler.json");
 if (!existsSync(config)) {
@@ -24,16 +24,21 @@ const child = spawn(command, [
   "--port", String(port()),
 ], { cwd: projectRoot, stdio: ["ignore", "inherit", "inherit"] });
 
-function stop(signal = "SIGTERM") {
+function stop(signal = "SIGKILL") {
   try { child.kill(signal); } catch { /* already gone */ }
+  killTree(process.pid);
 }
 process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
 child.on("error", (error) => {
   console.error("Falha ao iniciar o servidor E2E:", error.message);
+  killTree(process.pid);
   process.exit(1);
 });
-child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
+child.on("exit", (code, signal) => {
+  killTree(process.pid);
+  process.exit(signal ? 1 : (code ?? 0));
+});
 
 if (waitForReady) {
   const deadline = Date.now() + 180_000;

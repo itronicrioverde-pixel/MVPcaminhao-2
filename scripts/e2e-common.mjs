@@ -1,11 +1,23 @@
+import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const projectRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 
+const STATE_REL_PREFIX = ".wrangler/e2e";
+
 export function stateDir() {
-  return resolve(process.env.E2E_STATE_DIR ?? join(projectRoot, ".wrangler", "e2e"));
+  const configured = process.env.E2E_STATE_DIR ?? join(projectRoot, ".wrangler", "e2e");
+  const dir = resolve(configured);
+  const rel = relative(projectRoot, dir).replaceAll(sep, "/");
+  const allowed = rel === STATE_REL_PREFIX || rel.startsWith(`${STATE_REL_PREFIX}/`);
+  if (!allowed) {
+    throw new Error(
+      `E2E_STATE_DIR precisa ser "${STATE_REL_PREFIX}" ou uma subpasta dentro de ${projectRoot} (recebido: ${dir}).`,
+    );
+  }
+  return dir;
 }
 
 export function port() {
@@ -14,14 +26,43 @@ export function port() {
 }
 
 export function baseUrl() {
-  return `http://127.0.0.1:${port()}`;
+  const configured = process.env.E2E_BASE_URL;
+  const targetPort = port();
+  if (!configured) return `http://127.0.0.1:${targetPort}`;
+  let url;
+  try {
+    url = new URL(configured);
+  } catch {
+    throw new Error(`E2E_BASE_URL inválida: ${configured}`);
+  }
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const urlPort = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+  const localHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if (url.protocol !== "http:" || !localHost || urlPort !== targetPort || url.pathname !== "/") {
+    throw new Error(
+      `E2E_BASE_URL precisa apontar para o servidor local iniciado pelo setup na porta ${targetPort} (recebido: ${configured}).`,
+    );
+  }
+  const href = url.href;
+  return href.endsWith("/") ? href.slice(0, -1) : href;
+}
+
+export function killTree(pid) {
+  if (!pid) return;
+  if (process.platform === "win32") {
+    try { spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" }); } catch { /* melhor esforço */ }
+    return;
+  }
+  for (const target of [-pid, pid]) {
+    try { process.kill(target, "SIGKILL"); } catch { /* já encerrado */ }
+  }
 }
 
 export function wranglerCommand() {
   return {
     command: process.execPath,
     args: [
-      "--import", join(projectRoot, "scripts", "sites-env.mjs"),
+      "--import", pathToFileURL(join(projectRoot, "scripts", "sites-env.mjs")).href,
       join(projectRoot, "node_modules", "wrangler", "bin", "wrangler.js"),
     ],
   };

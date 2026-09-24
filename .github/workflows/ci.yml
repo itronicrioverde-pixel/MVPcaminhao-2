@@ -43,6 +43,9 @@ jobs:
       - name: Test records payload and save/load flows
         run: node scripts/test-records-flow.mjs
 
+      - name: Test E2E state dir and URL guards
+        run: node scripts/test-e2e-guards.mjs
+
       - name: Build
         run: npm run build
 

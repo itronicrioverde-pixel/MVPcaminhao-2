@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { baseUrl, port, projectRoot, stateDir } from "../../scripts/e2e-common.mjs";
+import { baseUrl, killTree, port, projectRoot, stateDir } from "../../scripts/e2e-common.mjs";
 
 const runtimeDir = join(projectRoot, ".e2e");
 const pidFile = join(runtimeDir, "server.json");
@@ -73,7 +73,8 @@ export default async function globalSetup() {
   } catch (error) {
     flushLog();
     console.error("E2E: falha ao subir o servidor. Fim do log:\n" + (log.split("\n").slice(-80).join("\n")));
-    try { server.kill("SIGKILL"); } catch { /* já encerrado */ }
+    killTree(server.pid);
+    try { rmSync(pidFile, { force: true }); } catch { /* melhor esforço */ }
     throw error;
   } finally {
     clearInterval(logTimer);

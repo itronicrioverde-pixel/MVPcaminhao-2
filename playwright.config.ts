@@ -1,8 +1,7 @@
 import { defineConfig } from "@playwright/test";
+import { baseUrl } from "./scripts/e2e-common.mjs";
 
-const port = Number.parseInt(process.env.E2E_PORT ?? "", 10);
-const E2E_PORT = Number.isInteger(port) && port > 0 ? port : 8788;
-const baseURL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${E2E_PORT}`;
+const baseURL = baseUrl();
 
 const desktopUser = {
   "oai-authenticated-user-id": process.env.E2E_USER_ID_DESKTOP ?? "e2e-desktop",

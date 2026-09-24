@@ -46,16 +46,15 @@ async function expectInViewport(locator: ReturnType<Page["getByRole"]>) {
   expect(box!.y + box!.height, "não deve cortar abaixo").toBeLessThanOrEqual(viewport!.height + 1);
 }
 
+function isMobileLayout(page: Page) {
+  return (page.viewportSize()?.width ?? 0) < 1024;
+}
+
 async function navTo(page: Page, label: string) {
-  const mobileNav = page.getByRole("navigation", { name: "Navegação mobile" });
-  if (await mobileNav.isVisible().catch(() => false)) {
-    await mobileNav.getByRole("button", { name: label, exact: true }).click();
-  } else {
-    await page
-      .getByRole("navigation", { name: "Navegação principal" })
-      .getByRole("button", { name: label, exact: true })
-      .click();
-  }
+  const nav = isMobileLayout(page)
+    ? page.getByRole("navigation", { name: "Navegação mobile" })
+    : page.getByRole("navigation", { name: "Navegação principal" });
+  await nav.getByRole("button", { name: label, exact: true }).click();
   await expect(
     page.getByRole("heading", { name: label, exact: true }),
   ).toBeVisible();
@@ -102,7 +101,7 @@ async function createTrip(page: Page, trip: { client: string; origin: string; de
 }
 
 function metricCard(page: Page, label: string) {
-  return page.locator(".metric-card").filter({ hasText: label });
+  return page.locator(".metric-label").filter({ hasText: label });
 }
 
 function tripRow(page: Page, clientName: string) {
@@ -233,6 +232,7 @@ test.describe("fluxos financeiros no navegador", () => {
     });
     const client = "Cliente E2E Refresh";
     await page.goto("/");
+    await expect(metricCard(page, "Faturamento")).toBeVisible();
     failNextGet = true;
     await createTrip(page, { ...TRIP_A, client });
     await expect(
@@ -284,8 +284,7 @@ test.describe("fluxos financeiros no navegador", () => {
   test("menu e navegação usam o layout desktop ou mobile sem quebrar", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Painel" })).toBeVisible();
-    const bottomNav = page.getByRole("navigation", { name: "Navegação mobile" });
-    if (await bottomNav.isVisible().catch(() => false)) {
+    if (isMobileLayout(page)) {
       await navTo(page, "Financeiro");
       await navTo(page, "Rotas");
       await navTo(page, "Clientes");
