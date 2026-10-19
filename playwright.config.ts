@@ -3,6 +3,11 @@ import { baseUrl } from "./scripts/e2e-common.mjs";
 
 const baseURL = baseUrl();
 
+// Opcional: usa um Chromium já instalado (ambientes sem acesso para baixar o navegador do Playwright).
+const launchOptions = process.env.E2E_CHROMIUM_PATH
+  ? { executablePath: process.env.E2E_CHROMIUM_PATH }
+  : undefined;
+
 const desktopUser = {
   "oai-authenticated-user-id": process.env.E2E_USER_ID_DESKTOP ?? "e2e-desktop",
   "oai-authenticated-user-email": process.env.E2E_USER_EMAIL_DESKTOP ?? "e2e-desktop@sites.test",
@@ -42,6 +47,7 @@ export default defineConfig({
       name: "desktop",
       use: {
         browserName: "chromium",
+        launchOptions,
         viewport: { width: 1440, height: 900 },
         extraHTTPHeaders: desktopUser,
       },
@@ -50,6 +56,7 @@ export default defineConfig({
       name: "mobile",
       use: {
         browserName: "chromium",
+        launchOptions,
         userAgent:
           "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
         viewport: { width: 390, height: 844 },

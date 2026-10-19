@@ -13,7 +13,9 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "test:e2e": "playwright test",
-    "test:e2e:migrate": "node scripts/e2e-migrate.mjs"
+    "test:e2e:migrate": "node scripts/e2e-migrate.mjs",
+    "test": "node scripts/test-finance.mjs && node scripts/test-api-client.mjs && node scripts/test-api-errors.mjs && node scripts/test-ui-flows.mjs && node scripts/test-records-flow.mjs && node scripts/test-e2e-guards.mjs",
+    "test:all": "npm run lint && tsc --noEmit && npm test && npm run test:e2e"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
