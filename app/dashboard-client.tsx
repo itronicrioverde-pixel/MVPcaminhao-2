@@ -14,6 +14,7 @@ import { Toaster } from "@/components/ui/sonner";
 import {FinanceEditDialog,TripEditor,RevenueDialog,RevenueList,AdminView} from "./management";
 import {httpApi,ApiError} from "@/lib/api-client";
 import {driverCommission,type Trip,type Expense,type Revenue,type Company} from "@/lib/finance";
+import {tripCost,tripProfit,loadLoss,resultLabel,totals,monthlySeries,expenseBreakdown as buildExpenseBreakdown,clientSummary as buildClientSummary} from "@/lib/summary";
 import {parseRecordsPayload} from "@/lib/records-payload";
 import {saveThenRefresh,errorMessage,REFRESH_FAILED_MESSAGE,DELETE_REFRESH_FAILED_MESSAGE} from "@/lib/records-save";
 import {createMountState,createLatestRequest,canApplyResponse} from "@/lib/records-load";
@@ -28,7 +29,6 @@ const number = new Intl.NumberFormat("pt-BR");
 const axisMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", notation: "compact", maximumFractionDigits: 1 });
 const chartDomain: [(value:number)=>number,(value:number)=>number] = [(min:number)=>Math.min(0,min<0?min*1.15:0),(max:number)=>Math.max(1,max*1.15)];
 const compactMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
-const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const SIGN_IN_URL = "/signin-with-chatgpt?return_to=%2F";
 const pieColors = ["#0d5c43", "#f4a825", "#df694d", "#4d82a8", "#8c6bb1", "#718078"];
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
@@ -37,13 +37,9 @@ const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "clientes", label: "Clientes", icon: Users }, {id:"admin",label:"Admin",icon:Settings},
 ];
 
-function resultLabel(value:number){return value<0?"Prejuízo":value>0?"Lucro":"Resultado";}
 function resultClass(value:number){return value<0?"text-red-600":value>0?"text-emerald-700":"text-slate-600";}
 function resultColor(value:number){return value<0?"#dc2626":value>0?"#0d5c43":"#64748b";}
-function tripCost(trip: Trip) { return trip.oil + trip.diesel + trip.toll + trip.extras + driverCommission(trip); }
-function tripProfit(trip: Trip) { return trip.freight - tripCost(trip); }
 function dateBR(value: string) { return new Date(`${value}T12:00:00`).toLocaleDateString("pt-BR"); }
-function loadLoss(trip: Trip) { if (!trip.loadedWeight || trip.deliveredWeight == null) return null; return Math.max(0, ((trip.loadedWeight - trip.deliveredWeight) / trip.loadedWeight) * 100); }
 
 export default function DashboardClient({ displayName }: { displayName: string }) {
   const [view, setView] = useState<View>("painel");
@@ -101,35 +97,14 @@ export default function DashboardClient({ displayName }: { displayName: string }
   const filteredTrips = useMemo(() => trips.filter((trip) => trip.tripDate.startsWith(year)), [trips, year]);
   const filteredExpenses = useMemo(() => expenses.filter((expense) => expense.expenseDate.startsWith(year)), [expenses, year]);
   const filteredRevenues=useMemo(()=>revenues.filter(r=>r.revenueDate.startsWith(year)),[revenues,year]);
-  const tripCosts = filteredTrips.reduce((sum, trip) => sum + tripCost(trip), 0);
-  const extraCosts = filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const revenue = filteredTrips.reduce((sum, trip) => sum + trip.freight, 0)+filteredRevenues.reduce((s,r)=>s+r.amount,0);
-  const costs = tripCosts + extraCosts;
-  const profit = revenue - costs;
-  const margin = revenue ? (profit / revenue) * 100 : 0;
-  const totalKm = filteredTrips.reduce((sum, trip) => sum + trip.km, 0);
+  const { revenue, costs, profit, margin, totalKm } = totals(filteredTrips, filteredExpenses, filteredRevenues);
 
-  const monthly = useMemo(() => months.map((month, index) => {
-    const monthTrips = filteredTrips.filter((trip) => new Date(`${trip.tripDate}T12:00:00`).getMonth() === index);
-    const monthExpenses = filteredExpenses.filter((expense) => new Date(`${expense.expenseDate}T12:00:00`).getMonth() === index);
-    const faturamento = monthTrips.reduce((sum, trip) => sum + trip.freight, 0)+filteredRevenues.filter(r=>Number(r.revenueDate.slice(5,7))===index+1).reduce((s,r)=>s+r.amount,0);
-    const despesas = monthTrips.reduce((sum, trip) => sum + tripCost(trip), 0) + monthExpenses.reduce((sum, item) => sum + item.amount, 0);
-    return { month, Faturamento: faturamento, Despesas: despesas, Resultado: faturamento - despesas };
-  }), [filteredTrips, filteredExpenses,filteredRevenues]);
+  const monthly = useMemo(() => monthlySeries(filteredTrips, filteredExpenses, filteredRevenues), [filteredTrips, filteredExpenses, filteredRevenues]);
 
-  const expenseBreakdown = useMemo(() => {
-    const values: Record<string, number> = { Abastecimento: filteredTrips.reduce((s, t) => s + t.diesel, 0), Pedágio: filteredTrips.reduce((s, t) => s + t.toll, 0), Óleo: filteredTrips.reduce((s, t) => s + t.oil, 0), Extras: 0, "Comissão do motorista": filteredTrips.reduce((s,t)=>s+driverCommission(t),0) };
-    filteredTrips.forEach(t=>t.extraItems.forEach(e=>{values[e.category]=(values[e.category]??0)+e.amount;}));
-    filteredExpenses.forEach((item) => { values[item.category] = (values[item.category] ?? 0) + item.amount; });
-    return Object.entries(values).map(([name, value]) => ({ name, value })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
-  }, [filteredTrips, filteredExpenses]);
+  const expenseBreakdown = useMemo(() => buildExpenseBreakdown(filteredTrips, filteredExpenses), [filteredTrips, filteredExpenses]);
 
   const profitByTrip = useMemo(() => [...filteredTrips].sort((a, b) => a.tripDate.localeCompare(b.tripDate)).map((trip) => ({ name: `${trip.origin} → ${trip.destination}`, data: dateBR(trip.tripDate), lucro: tripProfit(trip) })), [filteredTrips]);
-  const clientSummary = useMemo(() => {
-    const map = new globalThis.Map<string, { name: string; trips: number; revenue: number; profit: number; lastTrip: string }>();
-    filteredTrips.forEach((trip) => { const current = map.get(trip.clientName) ?? { name: trip.clientName, trips: 0, revenue: 0, profit: 0, lastTrip: trip.tripDate }; current.trips += 1; current.revenue += trip.freight; current.profit += tripProfit(trip); if (trip.tripDate > current.lastTrip) current.lastTrip = trip.tripDate; map.set(trip.clientName, current); });
-    return [...map.values()].sort((a, b) => b.revenue - a.revenue);
-  }, [filteredTrips]);
+  const clientSummary = useMemo(() => buildClientSummary(filteredTrips), [filteredTrips]);
   const routeRanking = useMemo(() => [...filteredTrips].sort((a, b) => tripProfit(b) - tripProfit(a)), [filteredTrips]);
   const years = useMemo(() => Array.from(new Set(["2026", ...trips.map((trip) => trip.tripDate.slice(0, 4)), ...expenses.map((item) => item.expenseDate.slice(0, 4)),...revenues.map(r=>r.revenueDate.slice(0,4))])).sort().reverse(), [trips, expenses,revenues]);
 

@@ -31,6 +31,12 @@ jobs:
       - name: Test finance (Linux)
         run: node scripts/test-finance.mjs
 
+      - name: Test summary calculations
+        run: node scripts/test-summary.mjs
+
+      - name: Test company logo
+        run: node scripts/test-logo.mjs
+
       - name: Test API client
         run: node scripts/test-api-client.mjs
 
