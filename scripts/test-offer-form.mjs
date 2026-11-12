@@ -50,7 +50,7 @@ try{
   ok(f.parseBalanceDays,'0',0);ok(f.parseBalanceDays,'30',30);bad(f.parseBalanceDays,'3651');bad(f.parseBalanceDays,'1,5');
 
   // formulário vazio não calcula nada em silêncio
-  const blank=f.emptyOfferForm();
+  const blank={...f.emptyOfferForm(),mode:'detailed'};
   const empty=f.buildOfferInput(blank);
   assert.deepEqual(empty.errors,{});assert.ok(empty.input);assert.equal(empty.marginMissing,true);
   const emptyResult=offer.analyzeOffer(empty.input);
@@ -115,6 +115,39 @@ try{
   assert.equal(pay.input.advanceBp,2000);assert.equal(pay.input.balanceDays,30);assert.equal(pay.input.moneyCostMonthlyBp,300);
   assert.equal(f.buildOfferInput({...form,balanceDays:'0'}).input.balanceDays,0,'prazo zero é diferente de não informado');
   assert.deepEqual(Object.keys(f.buildOfferInput({...form,advance:'120'}).errors),['advance']);
+
+  // folga de segurança: 10% se não disser nada, e pode ser mudada
+  assert.equal(f.emptyOfferForm().mode,'quick','quem chega agora começa pelo modo rápido');
+  assert.equal(built.input.safetyBp,1000);
+  assert.equal(f.buildOfferInput({...form,safety:'0'}).input.safetyBp,0);
+  assert.equal(f.buildOfferInput({...form,safety:'15'}).input.safetyBp,1500);
+  assert.deepEqual(Object.keys(f.buildOfferInput({...form,safety:'abc'}).errors),['safety']);
+
+  // modo rápido: poucos números, um consumo médio e um custo por km que já inclui tudo
+  const quick={...f.emptyOfferForm(),mode:'quick',freight:'10.060',kmLoaded:'600',kmEmptyTo:'120',kplAvg:'2,12',diesel:'6,79',toll:'450',vehicleKmAll:'2',commission:'13',margin:'20'};
+  const q=f.buildOfferInput(quick);
+  assert.deepEqual(q.errors,{});assert.equal(q.marginMissing,false);
+  assert.deepEqual(q.input.legs,[{kind:'empty',km:120,kmPerLiterCenti:212},{kind:'loaded',km:600,kmPerLiterCenti:212},{kind:'empty',km:0,kmPerLiterCenti:212}],'o mesmo consumo médio nos dois');
+  assert.equal(q.input.vehicleCostCentsPerKm,200);assert.equal(q.input.fixedCostPerDayCents,0,'o custo por km do modo rápido já inclui o fixo');
+  assert.equal(q.input.arla,null);assert.equal(q.input.floor,null);assert.equal(q.input.durationHours,null);assert.equal(q.input.advanceBp,0);assert.equal(q.input.balanceDays,null);
+  assert.equal(q.input.commissionBase,'gross');assert.equal(q.input.extraCostsCents,0);assert.equal(q.input.safetyBp,1000);assert.equal(q.input.tollPayer,'me');
+  const qr=offer.analyzeOffer(q.input);
+  assert.equal(qr.complete,true,'com os números do modo rápido a análise fica completa');assert.deepEqual(qr.pending,[]);assert.equal(qr.decision,'compensa');
+  // o que está escondido no modo rápido não conta, nem gera erro
+  const hidden=f.buildOfferInput({...quick,kplLoaded:'abc',kplEmpty:'x',arlaUse:true,arlaPct:'9',fixedDay:'500',days:'3',kmEmptyBack:'90',extras:'1000',vehicleKm:'9',ccd:'5',advance:'50',discounts:'999',commissionBase:'net'});
+  assert.deepEqual(hidden.errors,{});assert.deepEqual(hidden.input,q.input,'campos do modo detalhado não mexem no modo rápido');
+  // faltou dado no modo rápido: pendência, não zero
+  const qNoKpl=offer.analyzeOffer(f.buildOfferInput({...quick,kplAvg:''}).input);
+  assert.ok(qNoKpl.pending.some(p=>p.code==='CONSUMO_AUSENTE'));
+  const qNoCost=offer.analyzeOffer(f.buildOfferInput({...quick,vehicleKmAll:''}).input);
+  assert.ok(qNoCost.pending.some(p=>p.code==='CUSTO_KM_VEICULO_NAO_INFORMADO'));
+  assert.deepEqual(Object.keys(f.buildOfferInput({...quick,kplAvg:'abc',vehicleKmAll:'-1'}).errors).sort(),['kplAvg','vehicleKmAll']);
+  // vale-pedágio e "sem pedágio" também valem no modo rápido
+  assert.equal(f.buildOfferInput({...quick,toll:'',tollPayer:'contractor'}).input.tollPayer,'contractor');
+  assert.equal(f.buildOfferInput({...quick,toll:'',noToll:true}).input.tollCents,0);
+  // quem está no rápido e ainda não preencheu nada: nada é inventado
+  const quickEmpty=offer.analyzeOffer(f.buildOfferInput(f.emptyOfferForm()).input);
+  assert.equal(quickEmpty.decision,'sem_frete');assert.equal(quickEmpty.complete,false);
 
   // erro em qualquer campo: nada é calculado e cada campo aponta o seu erro
   const wrong=f.buildOfferInput({...form,toll:'abc',diesel:'6,7999',commission:'150'});

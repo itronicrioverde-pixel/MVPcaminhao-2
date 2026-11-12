@@ -18,7 +18,7 @@ try{
     legs:[{kind:'empty',km:120,kmPerLiterCenti:300},{kind:'loaded',km:600,kmPerLiterCenti:200}],
     dieselPriceMilli:6790,tollCents:45000,extraCostsCents:0,vehicleCostCentsPerKm:150,
     deductionsCents:0,commissionBp:1300,commissionBase:'gross',otherPercentBp:0,targetMarginBp:2000,durationHours:null,
-    tollPayer:'me',arla:null,fixedCostPerDayCents:0,floor:null,advanceBp:0,balanceDays:null,moneyCostMonthlyBp:0,
+    tollPayer:'me',arla:null,fixedCostPerDayCents:0,floor:null,advanceBp:0,balanceDays:null,moneyCostMonthlyBp:0,safetyBp:0,
     ...over});
   const codes=r=>r.pending.map(p=>p.code).sort();
 
@@ -235,6 +235,30 @@ try{
   // 19. entradas novas inválidas
   for(const bad of [base({advanceBp:10001}),base({advanceBp:-1}),base({moneyCostMonthlyBp:10001}),base({balanceDays:-1}),base({balanceDays:1.5}),base({fixedCostPerDayCents:-1}),base({tollPayer:'outro'}),base({arla:{percentOfDieselBp:-1,priceMilli:3500}}),base({arla:{percentOfDieselBp:10001,priceMilli:3500}}),base({floor:{ccdE4:-1,ccCents:0}}),base({floor:{ccdE4:52177,ccCents:1.5}})])
     assert.throws(()=>o.analyzeOffer(bad),RangeError);
+
+  // 20. faixa de segurança: e se os custos ficarem X% maiores?
+  assert.equal(full.stressResultCents,full.resultCents,'sem folga pedida, o pior caso é igual ao caso provável');
+  const safe=o.analyzeOffer(base({safetyBp:1000}));
+  assert.equal(safe.stressCostCents,422246,'R$ 3.838,60 de custos conhecidos + 10%');
+  assert.equal(safe.stressResultCents,1006000-422246-130780,'a comissão não muda: ela é sobre o frete');
+  assert.equal(safe.stressMarginBp,4503);assert.equal(safe.resultCents,491360,'o resultado provável não muda');
+  assert.equal(safe.robustness,'folga','mesmo 10% pior ainda passa da meta de 20%');
+  const tight=o.analyzeOffer(base({freight:{kind:'fixed',cents:600000},safetyBp:1000}));
+  assert.equal(tight.decision,'compensa');assert.equal(tight.marginBp,2302);
+  assert.equal(tight.stressResultCents,99754);assert.equal(tight.stressMarginBp,1663);
+  assert.equal(tight.robustness,'apertado','compensa no caso provável, mas não se os custos subirem 10%');
+  assert.equal(o.analyzeOffer(base({freight:{kind:'fixed',cents:500000},safetyBp:1000})).robustness,null,'se já não compensa, não há o que chamar de folga');
+  assert.equal(o.analyzeOffer(base({freight:{kind:'fixed',cents:0},safetyBp:1000})).robustness,null);
+  assert.equal(o.analyzeOffer(base({freight:{kind:'fixed',cents:0},safetyBp:1000})).stressMarginBp,null);
+  // o pior caso só encarece o que já se conhece; o que falta continua pendência
+  const partial=o.analyzeOffer(base({legs:[{kind:'loaded',km:600,kmPerLiterCenti:null}],safetyBp:1000}));
+  assert.equal(partial.stressCostCents,Math.round(partial.knownCostsCents*1.1));assert.equal(partial.complete,false);
+  // custo por km a partir do que se gastou no ano
+  assert.equal(o.costPerKmFromYear(15000000,100000),150,'R$ 150.000 em 100.000 km = R$ 1,50 por km');
+  assert.equal(o.costPerKmFromYear(5000000,3000),1667,'R$ 16,67: arredonda para cima');
+  assert.equal(o.costPerKmFromYear(1000000,0),null,'sem km rodados não há média');
+  assert.throws(()=>o.costPerKmFromYear(-1,1000),RangeError);assert.throws(()=>o.costPerKmFromYear(1000,1.5),RangeError);
+  for(const bad of [base({safetyBp:-1}),base({safetyBp:10001}),base({safetyBp:1.5})])assert.throws(()=>o.analyzeOffer(bad),RangeError);
 
   // 12. dinheiro sempre inteiro, sem sobra de ponto flutuante
   for(const r of [fuel,full,noKpl,loss]){for(const v of [r.knownCostsCents,r.resultCents,r.commissionCents])assert.ok(Number.isInteger(v));}

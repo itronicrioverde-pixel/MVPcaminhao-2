@@ -54,10 +54,13 @@ async function navTo(page: Page, label: string) {
   const nav = isMobileLayout(page)
     ? page.getByRole("navigation", { name: "Navegação mobile" })
     : page.getByRole("navigation", { name: "Navegação principal" });
-  await nav.getByRole("button", { name: label, exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: label, exact: true }),
-  ).toBeVisible();
+  const button = nav.getByRole("button", { name: label, exact: true });
+  const heading = page.getByRole("heading", { name: label, exact: true });
+  // um clique feito antes de a página terminar de carregar se perde: repete até a tela mudar
+  await expect(async () => {
+    await button.click();
+    await expect(heading).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 15000 });
 }
 
 async function openCreateDialog(page: Page) {

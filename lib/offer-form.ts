@@ -77,6 +77,8 @@ export function parseBalanceDays(text: string): Parsed {
 }
 
 export type OfferForm = {
+  /** "quick": poucos números, consumo médio e custo por km que já inclui tudo. "detailed": todos os campos. */
+  mode: "quick" | "detailed";
   freightMode: "fixed" | "perTon";
   freight: string;
   rate: string;
@@ -86,6 +88,8 @@ export type OfferForm = {
   kmEmptyBack: string;
   kplEmpty: string;
   kplLoaded: string;
+  /** Modo rápido: um consumo médio para a viagem toda. */
+  kplAvg: string;
   diesel: string;
   toll: string;
   noToll: boolean;
@@ -94,6 +98,8 @@ export type OfferForm = {
   arlaPct: string;
   arlaPrice: string;
   vehicleKm: string;
+  /** Modo rápido: custo por km que já inclui parcela, seguro, IPVA, pneus e manutenção. */
+  vehicleKmAll: string;
   fixedDay: string;
   extras: string;
   commission: string;
@@ -107,15 +113,17 @@ export type OfferForm = {
   advance: string;
   balanceDays: string;
   moneyCost: string;
+  safety: string;
 };
 
 export function emptyOfferForm(): OfferForm {
   return {
+    mode: "quick",
     freightMode: "fixed", freight: "", rate: "", weightKg: "",
-    kmEmptyTo: "", kmLoaded: "", kmEmptyBack: "", kplEmpty: "", kplLoaded: "", diesel: "",
-    toll: "", noToll: false, tollPayer: "me", arlaUse: false, arlaPct: "", arlaPrice: "", vehicleKm: "", fixedDay: "", extras: "",
+    kmEmptyTo: "", kmLoaded: "", kmEmptyBack: "", kplEmpty: "", kplLoaded: "", kplAvg: "", diesel: "",
+    toll: "", noToll: false, tollPayer: "me", arlaUse: false, arlaPct: "", arlaPrice: "", vehicleKm: "", vehicleKmAll: "", fixedDay: "", extras: "",
     commission: "", margin: "", commissionBase: "gross", discounts: "", otherPct: "", days: "",
-    ccd: "", cc: "", advance: "", balanceDays: "", moneyCost: "",
+    ccd: "", cc: "", advance: "", balanceDays: "", moneyCost: "", safety: "",
   };
 }
 
@@ -126,6 +134,9 @@ export type BuiltOffer = {
   marginMissing: boolean;
 };
 
+/** Folga de segurança padrão: custos 10% maiores no pior caso. */
+const DEFAULT_SAFETY_BP = 1000;
+
 export function buildOfferInput(form: OfferForm): BuiltOffer {
   const errors: BuiltOffer["errors"] = {};
   const read = (field: keyof OfferForm, parser: (text: string) => Parsed) => {
@@ -133,42 +144,55 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
     if (parsed.error) errors[field] = parsed.error;
     return parsed.value;
   };
+  // No modo rápido só os campos visíveis contam: o que ficou escondido do modo detalhado não entra, nem gera erro.
+  const quick = form.mode === "quick";
+  const detailed = !quick;
 
   const freightFixed = form.freightMode === "fixed" ? read("freight", parseMoney) : null;
   const rate = form.freightMode === "perTon" ? read("rate", parseMoney) : null;
   const weightKg = form.freightMode === "perTon" ? read("weightKg", parseWeightKg) : null;
   const kmEmptyTo = read("kmEmptyTo", parseKm);
   const kmLoaded = read("kmLoaded", parseKm);
-  const kmEmptyBack = read("kmEmptyBack", parseKm);
-  const kplEmpty = read("kplEmpty", parseConsumption);
-  const kplLoaded = read("kplLoaded", parseConsumption);
+  const kmEmptyBack = detailed ? read("kmEmptyBack", parseKm) : null;
+  const kplEmpty = detailed ? read("kplEmpty", parseConsumption) : null;
+  const kplLoaded = detailed ? read("kplLoaded", parseConsumption) : null;
+  const kplAvg = quick ? read("kplAvg", parseConsumption) : null;
   const diesel = read("diesel", parsePricePerLiter);
   const toll = form.noToll ? 0 : read("toll", parseMoney);
-  const vehicleKm = read("vehicleKm", parseMoney);
-  const fixedDay = read("fixedDay", parseMoney);
-  const arlaPct = form.arlaUse ? read("arlaPct", parsePercent) : null;
-  const arlaPrice = form.arlaUse ? read("arlaPrice", parsePricePerLiter) : null;
-  const extras = read("extras", parseMoney);
+  const vehicleKm = quick ? read("vehicleKmAll", parseMoney) : read("vehicleKm", parseMoney);
+  const fixedDay = detailed ? read("fixedDay", parseMoney) : 0;
+  const arlaPct = detailed && form.arlaUse ? read("arlaPct", parsePercent) : null;
+  const arlaPrice = detailed && form.arlaUse ? read("arlaPrice", parsePricePerLiter) : null;
+  const extras = detailed ? read("extras", parseMoney) : 0;
   const commission = read("commission", parsePercent);
   const margin = read("margin", parsePercent);
-  const discounts = read("discounts", parseMoney);
-  const otherPct = read("otherPct", parsePercent);
-  const hours = read("days", parseDays);
-  const ccd = read("ccd", parseCcd);
-  const cc = read("cc", parseMoney);
-  if (ccd !== null && cc === null && !errors.cc) errors.cc = "Informe o CC junto com o CCD.";
-  if (cc !== null && ccd === null && !errors.ccd) errors.ccd = "Informe o CCD junto com o CC.";
-  const advance = read("advance", parsePercent);
-  const balanceDays = read("balanceDays", parseBalanceDays);
-  const moneyCost = read("moneyCost", parsePercent);
+  const discounts = detailed ? read("discounts", parseMoney) : 0;
+  const otherPct = detailed ? read("otherPct", parsePercent) : 0;
+  const hours = detailed ? read("days", parseDays) : null;
+  const ccd = detailed ? read("ccd", parseCcd) : null;
+  const cc = detailed ? read("cc", parseMoney) : null;
+  if (detailed) {
+    if (ccd !== null && cc === null && !errors.cc) errors.cc = "Informe o CC junto com o CCD.";
+    if (cc !== null && ccd === null && !errors.ccd) errors.ccd = "Informe o CCD junto com o CC.";
+  }
+  const advance = detailed ? read("advance", parsePercent) : null;
+  const balanceDays = detailed ? read("balanceDays", parseBalanceDays) : null;
+  const moneyCost = detailed ? read("moneyCost", parsePercent) : null;
+  const safety = detailed ? read("safety", parsePercent) : null;
 
   if (Object.keys(errors).length > 0) return { input: null, errors, marginMissing: margin === null };
 
-  const legs: Leg[] = [
-    { kind: "empty", km: kmEmptyTo ?? 0, kmPerLiterCenti: kplEmpty },
-    { kind: "loaded", km: kmLoaded ?? 0, kmPerLiterCenti: kplLoaded },
-    { kind: "empty", km: kmEmptyBack ?? 0, kmPerLiterCenti: kplEmpty },
-  ];
+  const legs: Leg[] = quick
+    ? [
+        { kind: "empty", km: kmEmptyTo ?? 0, kmPerLiterCenti: kplAvg },
+        { kind: "loaded", km: kmLoaded ?? 0, kmPerLiterCenti: kplAvg },
+        { kind: "empty", km: 0, kmPerLiterCenti: kplAvg },
+      ]
+    : [
+        { kind: "empty", km: kmEmptyTo ?? 0, kmPerLiterCenti: kplEmpty },
+        { kind: "loaded", km: kmLoaded ?? 0, kmPerLiterCenti: kplLoaded },
+        { kind: "empty", km: kmEmptyBack ?? 0, kmPerLiterCenti: kplEmpty },
+      ];
   const input: OfferInput = {
     freight: form.freightMode === "fixed"
       ? { kind: "fixed", cents: freightFixed ?? 0 }
@@ -177,13 +201,13 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
     dieselPriceMilli: diesel,
     tollPayer: form.tollPayer,
     tollCents: toll,
-    arla: form.arlaUse ? { percentOfDieselBp: arlaPct, priceMilli: arlaPrice } : null,
+    arla: detailed && form.arlaUse ? { percentOfDieselBp: arlaPct, priceMilli: arlaPrice } : null,
     extraCostsCents: extras ?? 0,
     vehicleCostCentsPerKm: vehicleKm,
     fixedCostPerDayCents: fixedDay,
     deductionsCents: discounts ?? 0,
     commissionBp: commission ?? 0,
-    commissionBase: form.commissionBase,
+    commissionBase: detailed ? form.commissionBase : "gross",
     otherPercentBp: otherPct ?? 0,
     targetMarginBp: margin ?? 0,
     durationHours: hours,
@@ -191,6 +215,7 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
     advanceBp: advance ?? 0,
     balanceDays,
     moneyCostMonthlyBp: moneyCost ?? 0,
+    safetyBp: quick ? DEFAULT_SAFETY_BP : (safety ?? DEFAULT_SAFETY_BP),
   };
   return { input, errors, marginMissing: margin === null };
 }

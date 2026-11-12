@@ -10,7 +10,7 @@ function isMobile(page: Page) {
   return (page.viewportSize()?.width ?? 0) < 1024;
 }
 
-async function openOffer(page: Page) {
+async function openOffer(page: Page, mode: "quick" | "detailed" = "detailed") {
   await page.goto("/");
   const nav = isMobile(page)
     ? page.getByRole("navigation", { name: "Navegação mobile" })
@@ -22,6 +22,9 @@ async function openOffer(page: Page) {
     await button.click();
     await expect(heading).toBeVisible({ timeout: 1500 });
   }).toPass({ timeout: 15000 });
+  const toggle = page.getByRole("button", { name: mode === "quick" ? "Rápido" : "Detalhado", exact: true });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
 }
 
 async function fill(page: Page, label: string, value: string) {
@@ -332,4 +335,147 @@ test("compensa, mas o prazo de pagamento tira a margem da meta", async ({ page }
   await expect(card).toContainText("Compensa");
   await expect(card).toContainText("depois do custo de esperar o saldo");
   await expect(card).toContainText("17,02%");
+});
+
+
+// ---------- modo rápido: poucos números, consumo médio e custo por km que já inclui tudo ----------
+// Frete R$ 10.060, 600 km carregado + 120 km vazio, 2,12 km/L, diesel R$ 6,79, pedágio R$ 450,
+// custo do caminhão R$ 2,00/km (tudo incluso), comissão 13%, meta 20%, custos 10% maiores no pior caso.
+
+async function fillQuick(page: Page, freight = "10.060") {
+  await fill(page, "Valor do frete (R$)", freight);
+  await fill(page, "Km carregado", "600");
+  await fill(page, "Km vazio (até a coleta e na volta)", "120");
+  await fill(page, "Consumo médio (km/L)", "2,12");
+  await fill(page, "Preço do diesel (R$/L)", "6,79");
+  await fill(page, "Pedágio (R$)", "450");
+  await fill(page, "Custo do caminhão por km, tudo incluso (R$/km)", "2");
+  await fill(page, "Comissão do motorista (%)", "13");
+  await fill(page, "Margem que você quer (%)", "20");
+}
+
+test("quem chega agora começa no modo rápido, com poucos campos", async ({ page }) => {
+  await page.goto("/");
+  const nav = isMobile(page)
+    ? page.getByRole("navigation", { name: "Navegação mobile" })
+    : page.getByRole("navigation", { name: "Navegação principal" });
+  const button = nav.getByRole("button", { name: isMobile(page) ? "Frete" : "Analisar frete", exact: true });
+  await expect(async () => {
+    await button.click();
+    await expect(page.getByRole("heading", { name: "Analisar frete", exact: true })).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 15000 });
+  await expect(page.getByRole("button", { name: "Rápido", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Consumo médio (km/L)", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Consumo vazio (km/L)", { exact: true })).toBeHidden();
+  await expect(page.getByLabel("Custo fixo por dia (R$/dia)", { exact: true })).toBeHidden();
+  await expect(page.getByText("Mais opções", { exact: true })).toBeHidden();
+});
+
+test("modo rápido: frete que compensa com folga mostra o pior caso", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page);
+  const card = result(page);
+  await expect(card).toContainText("Compensa");
+  await expect(card).toContainText("R$ 4.556,16");
+  await expect(card).toContainText("45,29%");
+  await expect(card).not.toContainText("Resultado provisório");
+  await expect(card).toContainText("Com folga");
+  await expect(card).toContainText("custos 10% maiores");
+  await expect(card).toContainText("R$ 4.136,56");
+  await expect(card).toContainText("41,12%");
+  await expect(card).toContainText("R$ 4.823,03");
+  await expect(card).toContainText("R$ 6.262,75");
+});
+
+test("modo rápido: compensa, mas apertado quando os custos subindo 10% derrubam a margem", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "6.500");
+  const card = result(page);
+  await expect(card).toContainText("Compensa");
+  await expect(card).toContainText("22,45%");
+  await expect(card).toContainText("Apertado");
+  await expect(card).toContainText("Compensa, mas fica apertado se os custos subirem");
+  await expect(card).toContainText("15,99%");
+  await expect(card).toContainText("R$ 1.039,36");
+  await fill(page, "Valor do frete (R$)", "6.900");
+  await expect(card).toContainText("Com folga");
+});
+
+test("modo rápido: abaixo da meta e prejuízo, sempre com o pior caso à vista", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "5.000");
+  await expect(result(page)).toContainText("Abaixo da sua meta");
+  await expect(result(page)).toContainText("-R$ 265,64");
+  await fill(page, "Valor do frete (R$)", "3.000");
+  await expect(result(page)).toContainText("Dá prejuízo");
+  await expect(result(page)).toContainText("-R$ 1.586,04");
+  await expect(result(page)).not.toContainText("Com folga");
+  await expect(result(page)).not.toContainText("Apertado");
+});
+
+test("modo rápido: o que falta vira pendência, não zero", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page);
+  await fill(page, "Consumo médio (km/L)", "");
+  await expect(result(page)).toContainText("Falta o consumo (km/L) de um trecho");
+  await expect(result(page)).toContainText("Resultado provisório");
+  await fill(page, "Consumo médio (km/L)", "2,12");
+  await fill(page, "Custo do caminhão por km, tudo incluso (R$/km)", "");
+  await expect(result(page)).toContainText("O custo por km do caminhão");
+  await expect(result(page)).toContainText("Resultado provisório");
+});
+
+test("modo rápido: ajuda para descobrir o custo por km a partir do ano", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page);
+  await page.getByText("Não sei meu custo por km", { exact: true }).click();
+  await fill(page, "Gasto no ano com parcela, seguro, IPVA, pneus e manutenção (R$)", "150.000");
+  await fill(page, "Km rodados no ano", "100.000");
+  await expect(page.getByText("R$ 1,50 por km", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Usar esse valor", exact: true }).click();
+  await expect(page.getByLabel("Custo do caminhão por km, tudo incluso (R$/km)", { exact: true })).toHaveValue("1,50");
+});
+
+test("os dois modos não se misturam e o modo escolhido fica guardado", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page);
+  const card = result(page);
+  await expect(card).toContainText("R$ 4.556,16");
+
+  // no detalhado há outros campos; o que se preenche lá não mexe no rápido
+  await page.getByRole("button", { name: "Detalhado", exact: true }).click();
+  await expect(page.getByLabel("Consumo vazio (km/L)", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Consumo médio (km/L)", { exact: true })).toBeHidden();
+  await fill(page, "Custo fixo por dia (R$/dia)", "500");
+  await fill(page, "Duração prevista (dias)", "3");
+  await page.getByRole("button", { name: "Rápido", exact: true }).click();
+  await expect(page.getByLabel("Consumo médio (km/L)", { exact: true })).toHaveValue("2,12");
+  await expect(card).toContainText("R$ 4.556,16");
+
+  // o modo e os números do caminhão ficam guardados neste aparelho
+  await page.getByRole("button", { name: "Detalhado", exact: true }).click();
+  await page.reload();
+  await openOffer(page, "quick");
+  await expect(page.getByLabel("Consumo médio (km/L)", { exact: true })).toHaveValue("2,12");
+  await expect(page.getByLabel("Custo do caminhão por km, tudo incluso (R$/km)", { exact: true })).toHaveValue("2");
+  await expect(page.getByLabel("Km carregado", { exact: true })).toHaveValue("");
+});
+
+test("modo rápido: vale-pedágio e rota sem pedágio", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page);
+  await page.getByLabel("Quem paga o pedágio?", { exact: true }).selectOption("contractor");
+  await expect(result(page)).toContainText("R$ 5.006,16");
+  await expect(result(page)).toContainText("Confira se o valor cobre a rota inteira");
+});
+
+test("o resumo fixo do celular também avisa quando compensa mas está apertado", async ({ page }) => {
+  test.skip(!isMobile(page), "o resumo fixo só existe no celular");
+  await openOffer(page, "quick");
+  await fillQuick(page, "6.500");
+  const bar = page.getByTestId("offer-summary-bar");
+  await expect(bar).toContainText("apertado");
+  await expect(bar).toContainText("R$ 1.458,96");
+  await fill(page, "Valor do frete (R$)", "6.900");
+  await expect(bar).not.toContainText("apertado");
 });

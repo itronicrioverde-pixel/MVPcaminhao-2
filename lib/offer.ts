@@ -54,6 +54,8 @@ export type OfferInput = {
   balanceDays: number | null;
   /** Quanto custa o seu dinheiro parado, em % ao mês. 0 = não contar. */
   moneyCostMonthlyBp: number;
+  /** Folga de segurança: quanto os custos conhecidos podem ficar maiores no pior caso. 0 = não calcular. */
+  safetyBp: number;
 };
 
 export type PendingCode =
@@ -74,6 +76,8 @@ export type Pending = { code: PendingCode; message: string };
 /** Avisos que não travam a análise completa. */
 export type Notice = { code: NoticeCode; message: string };
 export type Decision = "compensa" | "abaixo_da_meta" | "prejuizo" | "sem_frete";
+/** Só para o frete que compensa: "folga" se ainda cumpre a meta com os custos maiores, "apertado" se não. */
+export type Robustness = "folga" | "apertado";
 
 export type LegResult = {
   kind: Leg["kind"];
@@ -121,6 +125,11 @@ export type OfferResult = {
   financingCostCents: number;
   resultAfterFinancingCents: number;
   marginAfterFinancingBp: number | null;
+  /** Custos conhecidos com a folga de segurança aplicada. */
+  stressCostCents: number;
+  stressResultCents: number;
+  stressMarginBp: number | null;
+  robustness: Robustness | null;
   decision: Decision;
   complete: boolean;
   pending: Pending[];
@@ -183,6 +192,13 @@ export function averageKmPerLiterCenti(cycles: { km: number; litersMilli: number
   const litersMilli = cycles.reduce((sum, cycle) => sum + cycle.litersMilli, 0);
   if (litersMilli <= 0) return null;
   return roundDiv(mul(km, 100000), litersMilli);
+}
+
+/** Custo por km a partir do que se gastou no ano (sem diesel e sem comissão) e dos km rodados no ano. */
+export function costPerKmFromYear(spendCents: number, kmPerYear: number) {
+  assertInt("gasto do ano", spendCents);
+  assertInt("km do ano", kmPerYear);
+  return kmPerYear === 0 ? null : roundDiv(spendCents, kmPerYear);
 }
 
 function legFuel(leg: Leg, dieselPriceMilli: number | null): LegResult {
@@ -255,6 +271,7 @@ function validate(input: OfferInput) {
   assertInt("adiantamento", input.advanceBp, 0, 10000);
   if (input.balanceDays !== null) assertInt("prazo do saldo", input.balanceDays, 0, 3650);
   assertInt("custo do dinheiro", input.moneyCostMonthlyBp, 0, 10000);
+  assertInt("folga de segurança", input.safetyBp, 0, 10000);
 }
 
 function evaluate(input: OfferInput): OfferResult {
@@ -336,6 +353,14 @@ function evaluate(input: OfferInput): OfferResult {
       : 0;
   const resultAfterFinancingCents = result - financingCostCents;
 
+  // pior caso: só encarece o que já se conhece; a comissão não muda, porque é sobre o frete
+  const stressCostCents = roundDiv(mul(knownCostsCents, 10000 + input.safetyBp), 10000);
+  const stressResultCents = resultAt(gross, { ...params, fixedCostsCents: stressCostCents }).result;
+  const robustness: Robustness | null =
+    decision !== "compensa" || input.safetyBp === 0
+      ? null
+      : mul(stressResultCents, 10000) >= mul(input.targetMarginBp, gross) ? "folga" : "apertado";
+
   let floorCents: number | null = null;
   if (input.floor) floorCents = roundDiv(mul(loadedKm, input.floor.ccdE4), 100) + input.floor.ccCents;
   const floorGapCents = floorCents === null ? null : gross - floorCents;
@@ -380,6 +405,10 @@ function evaluate(input: OfferInput): OfferResult {
     financingCostCents,
     resultAfterFinancingCents,
     marginAfterFinancingBp: gross > 0 ? roundDiv(mul(resultAfterFinancingCents, 10000), gross) : null,
+    stressCostCents,
+    stressResultCents,
+    stressMarginBp: gross > 0 ? roundDiv(mul(stressResultCents, 10000), gross) : null,
+    robustness,
     decision,
     complete: pending.length === 0,
     pending,

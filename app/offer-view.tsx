@@ -3,13 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { analyzeOffer, type Decision, type OfferResult } from "@/lib/offer";
-import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, type OfferForm } from "@/lib/offer-form";
+import { analyzeOffer, costPerKmFromYear, type Decision, type OfferResult } from "@/lib/offer";
+import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, parseKm, parseMoney, type OfferForm } from "@/lib/offer-form";
 
 // Só o que é do caminhão e do jeito de trabalhar fica guardado neste aparelho.
 // O que é da oferta (frete, quilômetros, pedágio, duração) começa vazio a cada análise.
 const STORAGE_KEY = "rota-financeira:analise-de-frete:v1";
-const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "diesel", "vehicleKm", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost"] as const;
+const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "kplAvg", "diesel", "vehicleKm", "vehicleKmAll", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost"] as const;
 
 const ANTT_CALCULATOR = "https://calculadorafrete.antt.gov.br/";
 
@@ -24,11 +24,13 @@ function resultText(value: number) {
   return value < 0 ? "text-red-700" : value > 0 ? "text-emerald-800" : "text-slate-700";
 }
 
-function subtitle(result: OfferResult, targetBp: number, marginMissing: boolean) {
+function subtitle(result: OfferResult, targetBp: number, marginMissing: boolean, tight: boolean) {
   const target = marginMissing ? "" : ` (sua meta: ${formatBp(targetBp)})`;
   switch (result.decision) {
     case "compensa":
-      return `Margem de ${formatBp(result.marginBp)}${target}.`;
+      return tight
+        ? `Compensa, mas fica apertado se os custos subirem. Margem de ${formatBp(result.marginBp)}${target}.`
+        : `Margem de ${formatBp(result.marginBp)}${target}.`;
     case "abaixo_da_meta":
       return `Dá lucro de ${formatBRL(result.resultCents)}, mas a margem é ${formatBp(result.marginBp)} e você quer ${formatBp(targetBp)}.`;
     case "prejuizo":
@@ -38,6 +40,10 @@ function subtitle(result: OfferResult, targetBp: number, marginMissing: boolean)
   }
 }
 
+function plainPercent(bp: number) {
+  return `${(bp / 100).toString().replace(".", ",")}%`;
+}
+
 /** Preço do diesel que o frete aguenta, sempre arredondado para baixo (não prometer folga que não existe). */
 function dieselLimit(maxMilli: number, currentMilli: number) {
   const increase = Math.round(((maxMilli - currentMilli) * 100) / currentMilli);
@@ -45,7 +51,7 @@ function dieselLimit(maxMilli: number, currentMilli: number) {
 }
 
 function NumField({ field, label, value, onChange, error, hint, numeric, disabled }: {
-  field: keyof OfferForm; label: string; value: string; onChange: (value: string) => void;
+  field: string; label: string; value: string; onChange: (value: string) => void;
   error?: string; hint?: string; numeric?: boolean; disabled?: boolean;
 }) {
   const id = `offer-${field}`;
@@ -106,6 +112,7 @@ function loadRemembered(): OfferForm {
       if (typeof saved[key] === "string") form[key] = saved[key] as string;
     }
     if (saved.commissionBase === "gross" || saved.commissionBase === "net") form.commissionBase = saved.commissionBase;
+    if (saved.mode === "quick" || saved.mode === "detailed") form.mode = saved.mode;
     if (typeof saved.arlaUse === "boolean") form.arlaUse = saved.arlaUse;
   } catch {
     // armazenamento bloqueado ou conteúdo inválido: começa vazio
@@ -116,11 +123,13 @@ function loadRemembered(): OfferForm {
 export function OfferView() {
   // Esta tela só abre depois do clique no menu, nunca vem pronta do servidor: ler aqui é seguro.
   const [form, setForm] = useState<OfferForm>(loadRemembered);
+  const [yearSpend, setYearSpend] = useState("");
+  const [yearKm, setYearKm] = useState("");
   const set = <K extends keyof OfferForm>(key: K) => (value: OfferForm[K]) => setForm((current) => ({ ...current, [key]: value }));
 
   useEffect(() => {
     try {
-      const remembered: Record<string, string | boolean> = { commissionBase: form.commissionBase, arlaUse: form.arlaUse };
+      const remembered: Record<string, string | boolean> = { commissionBase: form.commissionBase, arlaUse: form.arlaUse, mode: form.mode };
       for (const key of REMEMBERED_TEXT) remembered[key] = form[key];
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(remembered));
     } catch {
@@ -143,6 +152,13 @@ export function OfferView() {
   const ToneIcon = tone?.icon ?? Calculator;
   const hasErrors = Object.keys(built.errors).length > 0;
   const contractorToll = form.tollPayer === "contractor";
+  const quick = form.mode === "quick";
+  const yearSpendCents = parseMoney(yearSpend);
+  const yearKmValue = parseKm(yearKm);
+  const yearCostPerKm =
+    yearSpendCents.value !== null && yearKmValue.value !== null && !yearSpendCents.error && !yearKmValue.error
+      ? costPerKmFromYear(yearSpendCents.value, yearKmValue.value)
+      : null;
 
   const needed = result && input && result.targetPriceCents !== null && !built.marginMissing && result.grossFreightCents > 0
     ? result.targetPriceCents - result.grossFreightCents
@@ -156,6 +172,24 @@ export function OfferView() {
       <div>
         <h2 className="text-2xl font-black">Esse frete compensa?</h2>
         <p className="mt-1 text-[#718078]">Preencha o que você sabe antes de aceitar. O que faltar aparece como pendência, nunca como zero.</p>
+        <div className="mt-3 inline-flex rounded-xl bg-[#e3e9e6] p-1" role="group" aria-label="Quanto detalhe você quer">
+          {([["quick", "Rápido"], ["detailed", "Detalhado"]] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={form.mode === mode}
+              onClick={() => set("mode")(mode)}
+              className={`min-h-11 rounded-lg px-5 text-sm font-bold transition ${form.mode === mode ? "bg-[#10251f] text-white shadow-sm" : "text-[#4a5a52]"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 max-w-2xl text-sm text-[#718078]">
+          {quick
+            ? "Modo rápido: um consumo médio e um custo por km que já inclui parcela, seguro, pneus e manutenção. Dá um preço bem próximo do real com poucos números."
+            : "Modo detalhado: consumo vazio e carregado, custo fixo por dia, ARLA, piso da ANTT, prazo de pagamento e mais."}
+        </p>
       </div>
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_440px]">
@@ -188,13 +222,24 @@ export function OfferView() {
           </section>
 
           <Card title="A viagem">
-            <NumField field="kmEmptyTo" label="Km até a coleta (vazio)" value={form.kmEmptyTo} onChange={set("kmEmptyTo")} error={built.errors.kmEmptyTo} numeric />
-            <NumField field="kmLoaded" label="Km carregado" value={form.kmLoaded} onChange={set("kmLoaded")} error={built.errors.kmLoaded} numeric />
-            <NumField field="kmEmptyBack" label="Km de volta (vazio)" value={form.kmEmptyBack} onChange={set("kmEmptyBack")} error={built.errors.kmEmptyBack} numeric hint="Deixe em branco se já tem carga de volta." />
-            <NumField field="days" label="Duração prevista (dias)" value={form.days} onChange={set("days")} error={built.errors.days} hint="Inclua a espera para carregar e descarregar, e a volta." />
-            <NumField field="kplEmpty" label="Consumo vazio (km/L)" value={form.kplEmpty} onChange={set("kplEmpty")} error={built.errors.kplEmpty} />
-            <NumField field="kplLoaded" label="Consumo carregado (km/L)" value={form.kplLoaded} onChange={set("kplLoaded")} error={built.errors.kplLoaded} />
-            <NumField field="diesel" label="Preço do diesel (R$/L)" value={form.diesel} onChange={set("diesel")} error={built.errors.diesel} />
+            {quick ? (
+              <>
+                <NumField field="kmLoaded" label="Km carregado" value={form.kmLoaded} onChange={set("kmLoaded")} error={built.errors.kmLoaded} numeric />
+                <NumField field="kmEmptyTo" label="Km vazio (até a coleta e na volta)" value={form.kmEmptyTo} onChange={set("kmEmptyTo")} error={built.errors.kmEmptyTo} numeric hint="Some o que o caminhão roda sem carga. Se já tem carga de volta, só a ida até a coleta." />
+                <NumField field="kplAvg" label="Consumo médio (km/L)" value={form.kplAvg} onChange={set("kplAvg")} error={built.errors.kplAvg} hint="Média da viagem toda, com carga e vazio." />
+                <NumField field="diesel" label="Preço do diesel (R$/L)" value={form.diesel} onChange={set("diesel")} error={built.errors.diesel} />
+              </>
+            ) : (
+              <>
+                <NumField field="kmEmptyTo" label="Km até a coleta (vazio)" value={form.kmEmptyTo} onChange={set("kmEmptyTo")} error={built.errors.kmEmptyTo} numeric />
+                <NumField field="kmLoaded" label="Km carregado" value={form.kmLoaded} onChange={set("kmLoaded")} error={built.errors.kmLoaded} numeric />
+                <NumField field="kmEmptyBack" label="Km de volta (vazio)" value={form.kmEmptyBack} onChange={set("kmEmptyBack")} error={built.errors.kmEmptyBack} numeric hint="Deixe em branco se já tem carga de volta." />
+                <NumField field="days" label="Duração prevista (dias)" value={form.days} onChange={set("days")} error={built.errors.days} hint="Inclua a espera para carregar e descarregar, e a volta." />
+                <NumField field="kplEmpty" label="Consumo vazio (km/L)" value={form.kplEmpty} onChange={set("kplEmpty")} error={built.errors.kplEmpty} />
+                <NumField field="kplLoaded" label="Consumo carregado (km/L)" value={form.kplLoaded} onChange={set("kplLoaded")} error={built.errors.kplLoaded} />
+                <NumField field="diesel" label="Preço do diesel (R$/L)" value={form.diesel} onChange={set("diesel")} error={built.errors.diesel} />
+              </>
+            )}
           </Card>
 
           <Card title="Custos da viagem">
@@ -215,10 +260,36 @@ export function OfferView() {
               <NumField field="toll" label="Pedágio (R$)" value={form.noToll && !contractorToll ? "" : form.toll} onChange={set("toll")} error={built.errors.toll} disabled={form.noToll && !contractorToll} hint={contractorToll ? "Só para conferir se o vale cobre a rota." : undefined} />
               {!contractorToll ? <CheckField label="Esta rota não tem pedágio" checked={form.noToll} onChange={set("noToll")} /> : null}
             </div>
-            <NumField field="vehicleKm" label="Custo por km do caminhão (R$/km)" value={form.vehicleKm} onChange={set("vehicleKm")} error={built.errors.vehicleKm} hint="Pneus, manutenção e desgaste por km rodado." />
-            <NumField field="fixedDay" label="Custo fixo por dia (R$/dia)" value={form.fixedDay} onChange={set("fixedDay")} error={built.errors.fixedDay} hint="Parcela, seguro, IPVA, depreciação, rastreador, salário. Digite 0 se não tem." />
-            <NumField field="extras" label="Outros custos (R$)" value={form.extras} onChange={set("extras")} error={built.errors.extras} hint="Alimentação, chapa, estacionamento…" />
-            <div className="sm:col-span-2">
+            {quick ? (
+              <div className="sm:col-span-2">
+                <NumField field="vehicleKmAll" label="Custo do caminhão por km, tudo incluso (R$/km)" value={form.vehicleKmAll} onChange={set("vehicleKmAll")} error={built.errors.vehicleKmAll} hint="Parcela, seguro, IPVA, pneus e manutenção, divididos pelos km rodados. Não inclui diesel nem comissão." />
+                <details className="mt-3 rounded-xl bg-[#f3f6f4] p-4">
+                  <summary className="min-h-11 cursor-pointer text-sm font-bold">Não sei meu custo por km</summary>
+                  <p className="mt-2 text-xs text-[#718078]">Some o que você gastou no último ano com parcela, seguro, IPVA, pneus e manutenção. Não some diesel nem comissão. Depois divida pelos km rodados no ano.</p>
+                  <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                    <NumField field="yearSpend" label="Gasto no ano com parcela, seguro, IPVA, pneus e manutenção (R$)" value={yearSpend} onChange={setYearSpend} error={yearSpendCents.error ?? undefined} />
+                    <NumField field="yearKm" label="Km rodados no ano" value={yearKm} onChange={setYearKm} error={yearKmValue.error ?? undefined} numeric />
+                  </div>
+                  {yearCostPerKm !== null ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <p className="text-sm font-bold">{formatBRL(yearCostPerKm)} por km</p>
+                      <button
+                        type="button"
+                        onClick={() => set("vehicleKmAll")((yearCostPerKm / 100).toFixed(2).replace(".", ","))}
+                        className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white"
+                      >
+                        Usar esse valor
+                      </button>
+                    </div>
+                  ) : null}
+                </details>
+              </div>
+            ) : (
+              <>
+              <NumField field="vehicleKm" label="Custo por km do caminhão (R$/km)" value={form.vehicleKm} onChange={set("vehicleKm")} error={built.errors.vehicleKm} hint="Pneus, manutenção e desgaste por km rodado." />
+              <NumField field="fixedDay" label="Custo fixo por dia (R$/dia)" value={form.fixedDay} onChange={set("fixedDay")} error={built.errors.fixedDay} hint="Parcela, seguro, IPVA, depreciação, rastreador, salário. Digite 0 se não tem." />
+              <NumField field="extras" label="Outros custos (R$)" value={form.extras} onChange={set("extras")} error={built.errors.extras} hint="Alimentação, chapa, estacionamento…" />
+              <div className="sm:col-span-2">
               <CheckField label="Meu caminhão usa ARLA 32" checked={form.arlaUse} onChange={set("arlaUse")} />
               {form.arlaUse ? (
                 <div className="mt-2 grid gap-4 sm:grid-cols-2">
@@ -226,7 +297,9 @@ export function OfferView() {
                   <NumField field="arlaPrice" label="Preço do ARLA 32 (R$/L)" value={form.arlaPrice} onChange={set("arlaPrice")} error={built.errors.arlaPrice} />
                 </div>
               ) : null}
-            </div>
+              </div>
+              </>
+            )}
           </Card>
 
           <Card title="Comissão e meta">
@@ -234,7 +307,7 @@ export function OfferView() {
             <NumField field="margin" label="Margem que você quer (%)" value={form.margin} onChange={set("margin")} error={built.errors.margin} hint="Quanto do frete você quer que sobre depois dos custos." />
           </Card>
 
-          <details className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
+          {!quick ? <details className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
             <summary className="min-h-11 cursor-pointer text-lg font-bold">Mais opções</summary>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div>
@@ -268,8 +341,14 @@ export function OfferView() {
               </div>
               <NumField field="ccd" label="CCD do piso ANTT (R$/km)" value={form.ccd} onChange={set("ccd")} error={built.errors.ccd} hint="Custo de deslocamento por km." />
               <NumField field="cc" label="CC do piso ANTT (R$)" value={form.cc} onChange={set("cc")} error={built.errors.cc} hint="Custo de carga e descarga." />
+
+              <div className="sm:col-span-2 border-t border-black/10 pt-4">
+                <p className="text-sm font-bold">Folga de segurança</p>
+                <p className="text-xs text-[#718078]">Mostra o resultado se os custos ficarem maiores do que você previu.</p>
+              </div>
+              <NumField field="safety" label="Folga nos custos (%)" value={form.safety} onChange={set("safety")} error={built.errors.safety} hint="Em branco usa 10%. Digite 0 para não calcular." />
             </div>
-          </details>
+          </details> : null}
         </form>
 
         <aside className="space-y-4 lg:sticky lg:top-24">
@@ -287,7 +366,7 @@ export function OfferView() {
                     <div className="min-w-0">
                       <p className="text-2xl font-black">{tone.title}</p>
                       {!result.complete && result.decision !== "sem_frete" ? <p className="mt-1 inline-block rounded-full bg-white/70 px-3 py-1 text-xs font-bold uppercase tracking-wide">Resultado provisório</p> : null}
-                      <p className="mt-2 text-sm">{subtitle(result, input.targetMarginBp, built.marginMissing)}</p>
+                      <p className="mt-2 text-sm">{subtitle(result, input.targetMarginBp, built.marginMissing, result.robustness === "apertado")}</p>
                     </div>
                   </div>
                   {built.marginMissing && result.decision !== "sem_frete" ? <p className="mt-3 text-sm">Você não definiu a margem que quer. Por enquanto só aviso se há prejuízo.</p> : null}
@@ -322,6 +401,24 @@ export function OfferView() {
                   ))}
                 </div>
 
+                {input.safetyBp > 0 && result.decision !== "sem_frete" ? (
+                  <div className={`rounded-[22px] border p-5 text-sm ${result.robustness === "apertado" ? "border-amber-300 bg-amber-50 text-amber-950" : result.robustness === "folga" ? "border-emerald-300 bg-emerald-50 text-emerald-950" : "border-black/[.05] bg-white shadow-sm"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-lg font-bold">Se os custos ficarem {plainPercent(input.safetyBp)} maiores</h3>
+                      {result.robustness ? <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-bold uppercase tracking-wide">{result.robustness === "folga" ? "Com folga" : "Apertado"}</span> : null}
+                    </div>
+                    <p className="mt-2">
+                      {result.robustness === "folga"
+                        ? `Mesmo com custos ${plainPercent(input.safetyBp)} maiores, a margem seria ${formatBp(result.stressMarginBp)}, ainda acima da sua meta.`
+                        : result.robustness === "apertado"
+                          ? `Atenção: com custos ${plainPercent(input.safetyBp)} maiores a margem cai para ${formatBp(result.stressMarginBp)}, abaixo da sua meta.`
+                          : `Com custos ${plainPercent(input.safetyBp)} maiores o resultado seria ${formatBRL(result.stressResultCents)}.`}
+                    </p>
+                    <Row label="Resultado no pior caso" detail={`Margem ${formatBp(result.stressMarginBp)}`} value={formatBRL(result.stressResultCents)} />
+                    <p className="text-xs opacity-80">Isso é um teste de segurança com a folga que você escolheu, não uma previsão. Só encarece os custos que você informou.</p>
+                  </div>
+                ) : null}
+
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Quanto cobrar</h3>
                   <Row label="Frete mínimo para empatar" value={result.breakEvenCents === null ? "—" : formatBRL(result.breakEvenCents)} />
@@ -338,11 +435,11 @@ export function OfferView() {
                         {result.floorGapCents >= 0 ? `${formatBRL(result.floorGapCents)} acima do piso.` : `${formatBRL(-result.floorGapCents)} abaixo do piso.`}
                       </p>
                     </>
-                  ) : (
+                  ) : !quick ? (
                     <p className="mt-2 text-xs text-[#718078]">
                       Piso mínimo da ANTT não calculado. Isso não quer dizer que não se aplica ao seu frete. Informe os coeficientes em “Mais opções” para comparar.
                     </p>
-                  )}
+                  ) : null}
                   {!result.complete ? <p className="mt-2 text-xs text-[#718078]">Estes valores também são provisórios enquanto houver pendência.</p> : null}
                 </div>
 
@@ -357,6 +454,7 @@ export function OfferView() {
                   </div>
                 ) : null}
 
+                {!quick ? (
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 text-sm shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Dinheiro e prazo</h3>
                   <Row label="Dinheiro seu necessário até receber" detail="Diesel, ARLA, pedágio e outros custos da estrada, menos o adiantamento" value={formatBRL(result.cashNeededCents)} />
@@ -369,6 +467,7 @@ export function OfferView() {
                     </>
                   ) : null}
                 </div>
+                ) : null}
 
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 text-sm shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Como chegamos nesse resultado</h3>
@@ -382,7 +481,7 @@ export function OfferView() {
                     label={contractorToll ? "Pedágio (vale do contratante)" : "Pedágio"}
                     value={contractorToll ? "por conta dele" : input.tollCents === null ? "não conferido" : `− ${formatBRL(input.tollCents)}`}
                   />
-                  <Row label="Custo do caminhão" detail={result.totalKm > 0 && input.vehicleCostCentsPerKm !== null ? `${result.totalKm} km × ${formatBRL(input.vehicleCostCentsPerKm)}` : undefined} value={result.vehicleCostCents === null ? "não informado" : `− ${formatBRL(result.vehicleCostCents)}`} />
+                  <Row label={quick ? "Custo do caminhão (tudo incluso)" : "Custo do caminhão"} detail={result.totalKm > 0 && input.vehicleCostCentsPerKm !== null ? `${result.totalKm} km × ${formatBRL(input.vehicleCostCentsPerKm)}` : undefined} value={result.vehicleCostCents === null ? "não informado" : `− ${formatBRL(result.vehicleCostCents)}`} />
                   {input.fixedCostPerDayCents !== 0 ? (
                     <Row
                       label="Custo fixo"
@@ -407,11 +506,11 @@ export function OfferView() {
           type="button"
           data-testid="offer-summary-bar"
           onClick={() => document.querySelector('[data-testid="offer-result"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
-          className={`fixed inset-x-3 bottom-[92px] z-20 flex min-h-14 items-center gap-3 rounded-2xl border-2 px-4 text-left shadow-lg lg:hidden ${tone.box}`}
+          className={`fixed inset-x-3 bottom-[92px] z-20 flex min-h-14 items-center gap-3 rounded-2xl border-2 px-4 text-left shadow-lg lg:hidden ${result.robustness === "apertado" ? TONES.abaixo_da_meta.box : tone.box}`}
           aria-label="Ver detalhes da análise"
         >
           <ToneIcon className="size-6 shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1 truncate font-black">{tone.title}{!result.complete && result.decision !== "sem_frete" ? " (provisório)" : ""}</span>
+          <span className="min-w-0 flex-1 truncate font-black">{tone.title}{result.robustness === "apertado" ? " (apertado)" : ""}{!result.complete && result.decision !== "sem_frete" ? " (provisório)" : ""}</span>
           {result.decision !== "sem_frete" ? <span className="shrink-0 font-black tabular-nums">{formatBRL(result.resultCents)}</span> : null}
         </button>
       ) : null}
