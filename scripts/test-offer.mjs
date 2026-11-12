@@ -18,6 +18,7 @@ try{
     legs:[{kind:'empty',km:120,kmPerLiterCenti:300},{kind:'loaded',km:600,kmPerLiterCenti:200}],
     dieselPriceMilli:6790,tollCents:45000,extraCostsCents:0,vehicleCostCentsPerKm:150,
     deductionsCents:0,commissionBp:1300,commissionBase:'gross',otherPercentBp:0,targetMarginBp:2000,durationHours:null,
+    tollPayer:'me',arla:null,fixedCostPerDayCents:0,floor:null,advanceBp:0,balanceDays:null,moneyCostMonthlyBp:0,
     ...over});
   const codes=r=>r.pending.map(p=>p.code).sort();
 
@@ -141,6 +142,99 @@ try{
     base({deductionsCents:1e13,commissionBase:'net',freight:{kind:'fixed',cents:2e13}}),
   ])assert.throws(()=>o.analyzeOffer(huge),RangeError);
   assert.throws(()=>o.averageKmPerLiterCenti([{km:1e13,litersMilli:1}]),RangeError);
+
+  // 13. pedágio: quem paga. Vale-pedágio do contratante não é custo seu, e também não vira lucro a mais
+  const vpo=o.analyzeOffer(base({tollPayer:'contractor'}));
+  assert.equal(vpo.tollCostCents,0);assert.equal(vpo.resultCents,491360+45000,'sem o pedágio no custo, sobra R$ 450,00 a mais');
+  assert.equal(vpo.knownCostsCents,230860+108000);assert.equal(vpo.complete,true);
+  assert.deepEqual(codes(o.analyzeOffer(base({tollPayer:'contractor',tollCents:null}))),[],'com vale-pedágio não precisa saber o valor para fechar a conta');
+  assert.ok(vpo.notices.some(n=>n.code==='VALE_PEDAGIO_CONFERIR'),'avisa para conferir se o vale cobre a rota');
+  assert.equal(full.tollCostCents,45000);assert.ok(!full.notices.some(n=>n.code==='VALE_PEDAGIO_CONFERIR'));
+
+  // 14. ARLA 32: litros como parte do diesel, preço próprio
+  const arla=o.analyzeOffer(base({arla:{percentOfDieselBp:500,priceMilli:3500}}));
+  assert.equal(arla.arlaLitersMilli,17000,'5% de 340 L = 17 L');
+  assert.equal(arla.arlaCostCents,5950,'17 L a R$ 3,50 = R$ 59,50');
+  assert.equal(arla.resultCents,491360-5950);assert.equal(arla.knownCostsCents,230860+5950+45000+108000);assert.equal(arla.complete,true);
+  assert.equal(full.arlaCostCents,null,'quem não usa ARLA não tem linha de ARLA');
+  assert.deepEqual(codes(o.analyzeOffer(base({arla:{percentOfDieselBp:null,priceMilli:3500}}))),['ARLA_INCOMPLETO']);
+  assert.deepEqual(codes(o.analyzeOffer(base({arla:{percentOfDieselBp:500,priceMilli:null}}))),['ARLA_INCOMPLETO']);
+  assert.deepEqual(codes(o.analyzeOffer(base({arla:{percentOfDieselBp:500,priceMilli:0}}))),['ARLA_INCOMPLETO'],'preço zero não vale como informado');
+  const arlaZero=o.analyzeOffer(base({arla:{percentOfDieselBp:0,priceMilli:null}}));
+  assert.equal(arlaZero.arlaCostCents,0);assert.deepEqual(codes(arlaZero),[],'consumo de ARLA conhecido e zero fecha a conta');
+  const arlaNoFuel=o.analyzeOffer(base({legs:[{kind:'loaded',km:600,kmPerLiterCenti:null}],arla:{percentOfDieselBp:500,priceMilli:3500}}));
+  assert.equal(arlaNoFuel.arlaCostCents,null,'sem os litros de diesel não dá para saber o ARLA');assert.deepEqual(codes(arlaNoFuel),['CONSUMO_AUSENTE']);
+
+  // 15. custo fixo por dia: parcela, seguro, IPVA, depreciação, rastreador, salário
+  const fixed=o.analyzeOffer(base({fixedCostPerDayCents:50000,durationHours:36}));
+  assert.equal(fixed.fixedCostCents,75000,'R$ 500,00 por dia x 36 h = R$ 750,00');
+  assert.equal(fixed.resultCents,491360-75000);assert.equal(fixed.resultPerDayCents,277573);
+  assert.equal(o.analyzeOffer(base({fixedCostPerDayCents:33333,durationHours:36})).fixedCostCents,50000,'49.999,5 arredonda para cima');
+  assert.equal(full.fixedCostCents,0,'custo fixo zero informado é zero conhecido');
+  assert.deepEqual(codes(o.analyzeOffer(base({fixedCostPerDayCents:null}))),['CUSTO_FIXO_DIA_NAO_INFORMADO']);
+  assert.deepEqual(codes(o.analyzeOffer(base({fixedCostPerDayCents:50000,durationHours:null}))),['DURACAO_AUSENTE']);
+  assert.equal(o.analyzeOffer(base({fixedCostPerDayCents:50000,durationHours:null})).fixedCostCents,null);
+  assert.deepEqual(codes(o.analyzeOffer(base({fixedCostPerDayCents:0,durationHours:null}))),[],'sem custo fixo não precisa de duração');
+  // mais dias parado com o mesmo frete: o resultado cai e o preço mínimo sobe
+  const slow=o.analyzeOffer(base({fixedCostPerDayCents:50000,durationHours:96}));
+  assert.ok(slow.resultCents<fixed.resultCents);assert.ok(slow.breakEvenCents>fixed.breakEvenCents);
+
+  // 16. piso mínimo da ANTT com os coeficientes que o próprio usuário informa (distância carregada x CCD + CC)
+  const floorInput={ccdE4:52177,ccCents:54186};
+  const withFloor=o.analyzeOffer(base({legs:[{kind:'empty',km:120,kmPerLiterCenti:300},{kind:'loaded',km:500,kmPerLiterCenti:200}],floor:floorInput}));
+  assert.equal(withFloor.floorCents,315071,'500 km x R$ 5,2177 + R$ 541,86 = R$ 3.150,71');
+  assert.equal(withFloor.floorGapCents,1006000-315071);assert.ok(!withFloor.notices.some(n=>n.code==='ABAIXO_DO_PISO'));
+  assert.equal(o.analyzeOffer(base({legs:[{kind:'loaded',km:1,kmPerLiterCenti:200}],floor:{ccdE4:52177,ccCents:0}})).floorCents,522,'R$ 5,2177 em 1 km = R$ 5,22 (arredonda para cima)');
+  const below=o.analyzeOffer(base({legs:[{kind:'loaded',km:500,kmPerLiterCenti:200}],floor:floorInput,freight:{kind:'fixed',cents:300000}}));
+  assert.equal(below.floorGapCents,300000-315071);assert.ok(below.notices.some(n=>n.code==='ABAIXO_DO_PISO'));
+  assert.equal(full.floorCents,null);assert.equal(full.floorGapCents,null);
+  assert.ok(full.notices.some(n=>n.code==='PISO_NAO_CALCULADO'),'piso não calculado é diferente de não se aplica');
+  assert.ok(!withFloor.notices.some(n=>n.code==='PISO_NAO_CALCULADO'));
+  assert.equal(withFloor.complete,true,'o piso é uma comparação a mais: não trava a análise completa');
+
+  // 17. folga: até quanto o diesel pode subir sem estragar o frete
+  const slack=o.analyzeOffer(base());
+  let firstFailBreakEven=null,firstFailTarget=null;
+  for(let p=6790;p<=60000&&(firstFailBreakEven===null||firstFailTarget===null);p+=1){
+    const r=o.analyzeOffer(base({dieselPriceMilli:p}));
+    if(firstFailBreakEven===null&&r.resultCents<0)firstFailBreakEven=p;
+    if(firstFailTarget===null&&r.resultCents*10000<2000*r.grossFreightCents)firstFailTarget=p;
+  }
+  assert.equal(slack.dieselMaxForBreakEvenMilli,firstFailBreakEven-1,'maior diesel sem dar prejuízo, conferido preço a preço');
+  assert.equal(slack.dieselMaxForTargetMilli,firstFailTarget-1,'maior diesel que ainda cumpre a meta, conferido preço a preço');
+  assert.ok(slack.dieselMaxForTargetMilli<slack.dieselMaxForBreakEvenMilli);assert.ok(slack.dieselMaxForTargetMilli>6790);
+  const edge=o.analyzeOffer(base({dieselPriceMilli:slack.dieselMaxForTargetMilli}));assert.equal(edge.decision,'compensa');
+  assert.notEqual(o.analyzeOffer(base({dieselPriceMilli:slack.dieselMaxForTargetMilli+1})).decision,'compensa');
+  const nearLoss=o.analyzeOffer(base({freight:{kind:'fixed',cents:500000}}));
+  assert.equal(nearLoss.decision,'abaixo_da_meta');assert.equal(nearLoss.dieselMaxForTargetMilli,null,'já não cumpre a meta: não há folga a mostrar');assert.ok(nearLoss.dieselMaxForBreakEvenMilli>6790);
+  const underwater=o.analyzeOffer(base({freight:{kind:'fixed',cents:400000}}));
+  assert.equal(underwater.dieselMaxForBreakEvenMilli,null);assert.equal(underwater.dieselMaxForTargetMilli,null);
+  assert.equal(o.analyzeOffer(base({dieselPriceMilli:null})).dieselMaxForBreakEvenMilli,null,'sem o preço do diesel não há folga');
+  assert.equal(o.analyzeOffer(base({legs:[{kind:'loaded',km:600,kmPerLiterCenti:null}]})).dieselMaxForTargetMilli,null,'sem o consumo também não');
+  assert.equal(o.analyzeOffer(base({freight:{kind:'fixed',cents:0}})).dieselMaxForTargetMilli,null);
+  assert.equal(o.analyzeOffer(base({arla:{percentOfDieselBp:500,priceMilli:3500}})).dieselMaxForBreakEvenMilli!==null,true);
+
+  // 18. dinheiro parado: adiantamento, saldo a receber e custo de esperar
+  const cash=o.analyzeOffer(base({freight:{kind:'fixed',cents:400000},advanceBp:2000,balanceDays:30,moneyCostMonthlyBp:300}));
+  assert.equal(cash.advanceCents,80000,'20% de R$ 4.000,00');
+  assert.equal(cash.cashNeededCents,275860-80000,'diesel e pedágio saem antes: o adiantamento cobre só parte');
+  assert.equal(cash.receivableCents,320000);
+  assert.equal(cash.financingCostCents,9600,'3% ao mês sobre R$ 3.200,00 por 30 dias');
+  assert.equal(cash.resultAfterFinancingCents,cash.resultCents-9600);
+  assert.equal(o.analyzeOffer(base({freight:{kind:'fixed',cents:400000},advanceBp:2000,balanceDays:15,moneyCostMonthlyBp:300})).financingCostCents,4800,'metade do prazo, metade do custo');
+  assert.equal(full.advanceCents,0);assert.equal(full.cashNeededCents,275860,'sem adiantamento você banca diesel e pedágio');
+  assert.equal(full.financingCostCents,0);assert.equal(full.resultAfterFinancingCents,full.resultCents);
+  assert.equal(o.analyzeOffer(base({advanceBp:8000})).cashNeededCents,0,'80% de adiantamento cobre as despesas da estrada');
+  assert.deepEqual(codes(o.analyzeOffer(base({moneyCostMonthlyBp:300,balanceDays:null}))),['PRAZO_AUSENTE']);
+  assert.deepEqual(codes(o.analyzeOffer(base({moneyCostMonthlyBp:0,balanceDays:null}))),[],'sem custo do dinheiro o prazo não faz diferença na conta');
+  const slowPay=o.analyzeOffer(base({freight:{kind:'fixed',cents:600000},moneyCostMonthlyBp:300,balanceDays:60}));
+  assert.equal(slowPay.decision,'compensa');assert.equal(slowPay.marginBp,2302);assert.equal(slowPay.financingCostCents,36000);assert.equal(slowPay.marginAfterFinancingBp,1702);
+  assert.ok(slowPay.notices.some(n=>n.code==='COMPENSA_SO_SEM_PRAZO'),'compensa, mas o prazo de pagamento tira a margem da meta');
+  assert.ok(!o.analyzeOffer(base({freight:{kind:'fixed',cents:600000},moneyCostMonthlyBp:300,balanceDays:10})).notices.some(n=>n.code==='COMPENSA_SO_SEM_PRAZO'));
+
+  // 19. entradas novas inválidas
+  for(const bad of [base({advanceBp:10001}),base({advanceBp:-1}),base({moneyCostMonthlyBp:10001}),base({balanceDays:-1}),base({balanceDays:1.5}),base({fixedCostPerDayCents:-1}),base({tollPayer:'outro'}),base({arla:{percentOfDieselBp:-1,priceMilli:3500}}),base({arla:{percentOfDieselBp:10001,priceMilli:3500}}),base({floor:{ccdE4:-1,ccCents:0}}),base({floor:{ccdE4:52177,ccCents:1.5}})])
+    assert.throws(()=>o.analyzeOffer(bad),RangeError);
 
   // 12. dinheiro sempre inteiro, sem sobra de ponto flutuante
   for(const r of [fuel,full,noKpl,loss]){for(const v of [r.knownCostsCents,r.resultCents,r.commissionCents])assert.ok(Number.isInteger(v));}

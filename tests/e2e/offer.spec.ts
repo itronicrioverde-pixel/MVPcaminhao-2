@@ -15,8 +15,13 @@ async function openOffer(page: Page) {
   const nav = isMobile(page)
     ? page.getByRole("navigation", { name: "Navegação mobile" })
     : page.getByRole("navigation", { name: "Navegação principal" });
-  await nav.getByRole("button", { name: isMobile(page) ? "Frete" : "Analisar frete", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Analisar frete", exact: true })).toBeVisible();
+  const button = nav.getByRole("button", { name: isMobile(page) ? "Frete" : "Analisar frete", exact: true });
+  const heading = page.getByRole("heading", { name: "Analisar frete", exact: true });
+  // um clique feito antes de a página terminar de carregar se perde: repete até a tela abrir
+  await expect(async () => {
+    await button.click();
+    await expect(heading).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 15000 });
 }
 
 async function fill(page: Page, label: string, value: string) {
@@ -31,6 +36,7 @@ async function fillTrip(page: Page, opts: { skipToll?: boolean } = {}) {
   await fill(page, "Preço do diesel (R$/L)", "6,79");
   if (!opts.skipToll) await fill(page, "Pedágio (R$)", "450");
   await fill(page, "Custo por km do caminhão (R$/km)", "1,50");
+  await fill(page, "Custo fixo por dia (R$/dia)", "0");
   await fill(page, "Comissão do motorista (%)", "13");
   await fill(page, "Margem que você quer (%)", "20");
 }
@@ -126,6 +132,7 @@ test("consumo, diesel e custo por km do caminhão ficam guardados neste aparelho
   await fill(page, "Consumo carregado (km/L)", "2");
   await fill(page, "Preço do diesel (R$/L)", "6,79");
   await fill(page, "Custo por km do caminhão (R$/km)", "1,50");
+  await fill(page, "Custo fixo por dia (R$/dia)", "500");
   await fill(page, "Comissão do motorista (%)", "13");
   await fill(page, "Margem que você quer (%)", "20");
   await fill(page, "Km carregado", "600");
@@ -137,6 +144,7 @@ test("consumo, diesel e custo por km do caminhão ficam guardados neste aparelho
   await expect(page.getByLabel("Consumo carregado (km/L)", { exact: true })).toHaveValue("2");
   await expect(page.getByLabel("Preço do diesel (R$/L)", { exact: true })).toHaveValue("6,79");
   await expect(page.getByLabel("Custo por km do caminhão (R$/km)", { exact: true })).toHaveValue("1,50");
+  await expect(page.getByLabel("Custo fixo por dia (R$/dia)", { exact: true })).toHaveValue("500");
   await expect(page.getByLabel("Comissão do motorista (%)", { exact: true })).toHaveValue("13");
   await expect(page.getByLabel("Margem que você quer (%)", { exact: true })).toHaveValue("20");
   // o que é da oferta (frete e quilômetros) não é guardado
@@ -210,4 +218,118 @@ test("o menu de baixo do celular mostra todos os itens inteiros, sem rolar", asy
     expect(b.right, `${b.label} cortado à direita`).toBeLessThanOrEqual(width);
     expect(b.clipped, `texto de ${b.label} cortado`).toBe(false);
   }
+});
+
+
+async function readyOffer(page: Page, freight = "10.060") {
+  await openOffer(page);
+  await fillTrip(page);
+  await fill(page, "Valor do frete (R$)", freight);
+}
+
+test("sem custo fixo informado o resultado fica provisório; zero conta como informado", async ({ page }) => {
+  await openOffer(page);
+  await fillTrip(page);
+  await fill(page, "Custo fixo por dia (R$/dia)", "");
+  await fill(page, "Valor do frete (R$)", "10.060");
+  await expect(result(page)).toContainText("O custo fixo por dia");
+  await expect(result(page)).toContainText("Resultado provisório");
+  await fill(page, "Custo fixo por dia (R$/dia)", "0");
+  await expect(result(page)).not.toContainText("Resultado provisório");
+});
+
+test("custo fixo por dia entra pelos dias da viagem e mostra o resultado por dia", async ({ page }) => {
+  await readyOffer(page);
+  await fill(page, "Custo fixo por dia (R$/dia)", "500");
+  await expect(result(page)).toContainText("Falta a duração da viagem em dias");
+  await fill(page, "Duração prevista (dias)", "1,5");
+  const card = result(page);
+  await expect(card).not.toContainText("Falta a duração");
+  await expect(card).toContainText("R$ 4.163,60");
+  await expect(card).toContainText("R$ 750,00");
+  await expect(card).toContainText("R$ 2.775,73");
+});
+
+test("vale-pedágio do contratante não é custo seu e pede conferência", async ({ page }) => {
+  await readyOffer(page);
+  await expect(result(page)).toContainText("R$ 4.913,60");
+  await page.getByLabel("Quem paga o pedágio?", { exact: true }).selectOption("contractor");
+  const card = result(page);
+  await expect(card).toContainText("R$ 5.363,60");
+  await expect(card).toContainText("Confira se o valor cobre a rota inteira");
+  await fill(page, "Pedágio (R$)", "");
+  await expect(card).not.toContainText("O pedágio ainda não foi conferido");
+  await expect(card).not.toContainText("Resultado provisório");
+});
+
+test("ARLA 32 só entra quando o caminhão usa e pede consumo e preço", async ({ page }) => {
+  await readyOffer(page);
+  await expect(page.getByLabel("ARLA 32: consumo (% do diesel)", { exact: true })).toBeHidden();
+  await page.getByLabel("Meu caminhão usa ARLA 32", { exact: true }).check();
+  await expect(result(page)).toContainText("Falta o consumo ou o preço do ARLA 32");
+  await fill(page, "ARLA 32: consumo (% do diesel)", "5");
+  await fill(page, "Preço do ARLA 32 (R$/L)", "3,5");
+  const card = result(page);
+  await expect(card).not.toContainText("Falta o consumo ou o preço do ARLA 32");
+  await expect(card).toContainText("R$ 4.854,10");
+  await expect(card).toContainText("R$ 59,50");
+  await expect(card).toContainText("17 L");
+});
+
+test("piso da ANTT com os coeficientes informados compara com o frete", async ({ page }) => {
+  await readyOffer(page);
+  await expect(result(page)).toContainText("Piso mínimo da ANTT não calculado");
+  await page.getByText("Mais opções", { exact: true }).click();
+  await fill(page, "CCD do piso ANTT (R$/km)", "5,2177");
+  await expect(page.getByText("Informe o CC junto com o CCD.")).toBeVisible();
+  await fill(page, "CC do piso ANTT (R$)", "541,86");
+  const card = result(page);
+  await expect(card).not.toContainText("Piso mínimo da ANTT não calculado");
+  await expect(card).toContainText("R$ 3.672,48");
+  await expect(card).toContainText("R$ 6.387,52 acima do piso");
+  await fill(page, "Valor do frete (R$)", "3.000");
+  await expect(card).toContainText("abaixo do piso mínimo da ANTT");
+  await expect(card).toContainText("R$ 672,48 abaixo do piso");
+});
+
+test("folga do diesel mostra até quanto ele pode subir", async ({ page }) => {
+  await readyOffer(page);
+  const card = result(page);
+  await expect(card).toContainText("R$ 15,32");
+  await expect(card).toContainText("mais 126%");
+  await expect(card).toContainText("R$ 21,24");
+  await expect(card).toContainText("mais 213%");
+  await fill(page, "Valor do frete (R$)", "5.000");
+  await expect(card).toContainText("Já não cumpre a sua meta");
+  await expect(card).toContainText("R$ 8,29");
+  await expect(card).toContainText("mais 22%");
+  await fill(page, "Valor do frete (R$)", "3.000");
+  await expect(card).not.toContainText("mais 22%");
+});
+
+test("adiantamento e prazo mostram o dinheiro seu necessário e o custo de esperar", async ({ page }) => {
+  await readyOffer(page);
+  await expect(result(page)).toContainText("R$ 2.758,60");
+  await page.getByText("Mais opções", { exact: true }).click();
+  await fill(page, "Adiantamento (%)", "20");
+  await fill(page, "Prazo para receber o saldo (dias)", "30");
+  await fill(page, "Custo do seu dinheiro (% ao mês)", "3");
+  const card = result(page);
+  await expect(card).toContainText("R$ 746,60");
+  await expect(card).toContainText("R$ 8.048,00");
+  await expect(card).toContainText("R$ 241,44");
+  await expect(card).toContainText("R$ 4.672,16");
+  await fill(page, "Prazo para receber o saldo (dias)", "");
+  await expect(card).toContainText("Falta o prazo para receber o saldo");
+});
+
+test("compensa, mas o prazo de pagamento tira a margem da meta", async ({ page }) => {
+  await readyOffer(page, "6.000");
+  await page.getByText("Mais opções", { exact: true }).click();
+  await fill(page, "Prazo para receber o saldo (dias)", "60");
+  await fill(page, "Custo do seu dinheiro (% ao mês)", "3");
+  const card = result(page);
+  await expect(card).toContainText("Compensa");
+  await expect(card).toContainText("depois do custo de esperar o saldo");
+  await expect(card).toContainText("17,02%");
 });
