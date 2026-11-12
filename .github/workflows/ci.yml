@@ -34,6 +34,9 @@ jobs:
       - name: Test summary calculations
         run: node scripts/test-summary.mjs
 
+      - name: Test offer analysis engine
+        run: node scripts/test-offer.mjs
+
       - name: Test company logo
         run: node scripts/test-logo.mjs
 
