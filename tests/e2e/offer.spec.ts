@@ -479,3 +479,60 @@ test("o resumo fixo do celular também avisa quando compensa mas está apertado"
   await fill(page, "Valor do frete (R$)", "6.900");
   await expect(bar).not.toContainText("apertado");
 });
+
+// ---------- comentários: simples de usar, mas explicando o que gera dúvida ----------
+
+test("o app explica o que é o frete, em palavras simples", async ({ page }) => {
+  await openOffer(page, "quick");
+  const help = page.locator("details", { hasText: "Entenda o frete" });
+  await help.getByText("Entenda o frete", { exact: true }).click();
+  await expect(help).toContainText("o valor que o contratante paga");
+  await expect(help).toContainText("por tonelada");
+  await expect(help).toContainText("valor fechado");
+  await expect(help).toContainText("peso que vale para cobrar");
+  await expect(help).toContainText("O frete tem que pagar");
+  await expect(help).toContainText("Se a volta é vazia");
+  await expect(help).toContainText("vale-pedágio");
+});
+
+test("modo rápido: comentário do que entra no custo por km", async ({ page }) => {
+  await openOffer(page, "quick");
+  const help = page.locator("details", { hasText: "O que entra no custo por km?" });
+  await help.getByText("O que entra no custo por km?", { exact: true }).click();
+  await expect(help).toContainText("parcela, seguro, IPVA, pneus e manutenção");
+  await expect(help).toContainText("Não entra");
+  await expect(help).toContainText("diesel");
+  await expect(help).toContainText("comissão");
+});
+
+test("modo detalhado: comentário do que é o custo fixo e como achar o valor por dia", async ({ page }) => {
+  await openOffer(page);
+  const help = page.locator("details", { hasText: "O que é o custo fixo?" });
+  await help.getByText("O que é o custo fixo?", { exact: true }).click();
+  await expect(help).toContainText("mesmo com o caminhão parado");
+  await expect(help).toContainText("parcela");
+  await expect(help).toContainText("depreciação");
+  await expect(help).toContainText("Não entra");
+  await expect(help).toContainText("pneus e manutenção");
+  await expect(help).toContainText("dias do mês em que o caminhão trabalha");
+});
+
+test("a margem e os números do resultado vêm explicados", async ({ page }) => {
+  await openOffer(page, "quick");
+  await expect(page.getByText("Quem define é o dono.", { exact: false })).toBeVisible();
+  await fillQuick(page, "10.060");
+  const card = result(page);
+  await expect(card).toContainText("frete ÷ todos os km, vazio e carregado");
+  await expect(card).toContainText("o que sobra depois de todos os custos");
+  await expect(card).toContainText("O menor frete em que você não perde dinheiro");
+  await expect(card).toContainText("O frete que deixa a margem que você quer");
+});
+
+test("a volta vazia pesa no resultado e o app mostra isso", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "10.060");
+  await expect(result(page)).toContainText("R$ 4.556,16");
+  await fill(page, "Km vazio (até a coleta e na volta)", "720");
+  await expect(result(page)).toContainText("R$ 1.434,46");
+  await expect(result(page)).toContainText("Abaixo da sua meta");
+});

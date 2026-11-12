@@ -83,6 +83,16 @@ function CheckField({ label, checked, onChange }: { label: string; checked: bool
   );
 }
 
+/** Comentário que só abre se a pessoa clicar, para não poluir a tela de quem já sabe. */
+function HelpNote({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
+  return (
+    <details className={`rounded-xl bg-[#f3f6f4] p-4 text-sm ${className}`}>
+      <summary className="min-h-11 cursor-pointer font-bold">{title}</summary>
+      <div className="mt-2 space-y-2 text-[#34443e]">{children}</div>
+    </details>
+  );
+}
+
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
@@ -219,6 +229,15 @@ export function OfferView() {
                 </>
               )}
             </div>
+            <HelpNote title="Entenda o frete" className="mt-4">
+              <p><b>O que é:</b> o valor que o contratante paga para você levar a carga da origem até o destino.</p>
+              <p><b>Como é combinado:</b> por tonelada (tarifa × peso) ou por valor fechado da viagem.</p>
+              <p><b>Peso faturável:</b> o peso que vale para cobrar. Pode ser o da origem, o do destino ou o menor, conforme o contrato. Se o do destino for menor, o frete diminui.</p>
+              <p><b>O frete tem que pagar:</b> o diesel, o pedágio (se for seu), o custo do caminhão, a comissão e ainda deixar a sua margem.</p>
+              <p><b>Se a volta é vazia,</b> o frete da ida também paga a volta. Por isso a tela pede os km vazios.</p>
+              <p><b>Fora do frete:</b> o vale-pedágio, em regra, vem do contratante à parte. Descontos e taxas do contratante saem do frete antes de você receber.</p>
+              <p><b>Quanto cai na conta:</b> o frete menos os descontos. Parte pode vir adiantada e o resto depois.</p>
+            </HelpNote>
           </section>
 
           <Card title="A viagem">
@@ -263,6 +282,10 @@ export function OfferView() {
             {quick ? (
               <div className="sm:col-span-2">
                 <NumField field="vehicleKmAll" label="Custo do caminhão por km, tudo incluso (R$/km)" value={form.vehicleKmAll} onChange={set("vehicleKmAll")} error={built.errors.vehicleKmAll} hint="Parcela, seguro, IPVA, pneus e manutenção, divididos pelos km rodados. Não inclui diesel nem comissão." />
+                <HelpNote title="O que entra no custo por km?" className="mt-3">
+                  <p><b>Entra:</b> parcela, seguro, IPVA, pneus e manutenção, divididos pelos km que o caminhão roda.</p>
+                  <p><b>Não entra:</b> o diesel (a tela já calcula à parte) e a comissão do motorista (tem campo próprio).</p>
+                </HelpNote>
                 <details className="mt-3 rounded-xl bg-[#f3f6f4] p-4">
                   <summary className="min-h-11 cursor-pointer text-sm font-bold">Não sei meu custo por km</summary>
                   <p className="mt-2 text-xs text-[#718078]">Some o que você gastou no último ano com parcela, seguro, IPVA, pneus e manutenção. Não some diesel nem comissão. Depois divida pelos km rodados no ano.</p>
@@ -288,6 +311,12 @@ export function OfferView() {
               <>
               <NumField field="vehicleKm" label="Custo por km do caminhão (R$/km)" value={form.vehicleKm} onChange={set("vehicleKm")} error={built.errors.vehicleKm} hint="Pneus, manutenção e desgaste por km rodado." />
               <NumField field="fixedDay" label="Custo fixo por dia (R$/dia)" value={form.fixedDay} onChange={set("fixedDay")} error={built.errors.fixedDay} hint="Parcela, seguro, IPVA, depreciação, rastreador, salário. Digite 0 se não tem." />
+              <HelpNote title="O que é o custo fixo?" className="sm:col-span-2">
+                <p>É o gasto do caminhão que existe mesmo com o caminhão parado: você paga rodando ou não.</p>
+                <p><b>Entra:</b> parcela, seguro, IPVA e licenciamento, rastreador, salário fixo do motorista e depreciação (o quanto o caminhão perde de valor com o tempo).</p>
+                <p><b>Não entra:</b> diesel e pedágio, pneus e manutenção (isso é o custo por km) nem a comissão.</p>
+                <p><b>Como achar o valor por dia:</b> some o que paga por mês e divida pelos dias do mês em que o caminhão trabalha, por exemplo 25. Dividir por 30 deixa o custo por dia menor que o real.</p>
+              </HelpNote>
               <NumField field="extras" label="Outros custos (R$)" value={form.extras} onChange={set("extras")} error={built.errors.extras} hint="Alimentação, chapa, estacionamento…" />
               <div className="sm:col-span-2">
               <CheckField label="Meu caminhão usa ARLA 32" checked={form.arlaUse} onChange={set("arlaUse")} />
@@ -304,7 +333,7 @@ export function OfferView() {
 
           <Card title="Comissão e meta">
             <NumField field="commission" label="Comissão do motorista (%)" value={form.commission} onChange={set("commission")} error={built.errors.commission} hint="Em branco se você não paga comissão." />
-            <NumField field="margin" label="Margem que você quer (%)" value={form.margin} onChange={set("margin")} error={built.errors.margin} hint="Quanto do frete você quer que sobre depois dos custos." />
+            <NumField field="margin" label="Margem que você quer (%)" value={form.margin} onChange={set("margin")} error={built.errors.margin} hint="Quanto do frete você quer que sobre, depois de todos os custos. Quem define é o dono." />
           </Card>
 
           {!quick ? <details className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
@@ -388,15 +417,16 @@ export function OfferView() {
 
                 <div className="grid grid-cols-2 gap-3">
                   {[
-                    ["Resultado", formatBRL(result.resultCents), resultText(result.resultCents)],
-                    ["Margem", formatBp(result.marginBp), resultText(result.resultCents)],
-                    ["Resultado por km", result.resultPerKmCents === null ? "—" : formatBRL(result.resultPerKmCents), resultText(result.resultPerKmCents ?? 0)],
-                    ["Receita por km", result.revenuePerKmCents === null ? "—" : formatBRL(result.revenuePerKmCents), ""],
-                    ...(result.resultPerDayCents !== null ? [["Resultado por dia", formatBRL(result.resultPerDayCents), resultText(result.resultPerDayCents)]] : []),
-                  ].map(([label, value, cls]) => (
+                    ["Resultado", formatBRL(result.resultCents), resultText(result.resultCents), "o que sobra depois de todos os custos"],
+                    ["Margem", formatBp(result.marginBp), resultText(result.resultCents), "a parte do frete que sobra para você"],
+                    ["Resultado por km", result.resultPerKmCents === null ? "—" : formatBRL(result.resultPerKmCents), resultText(result.resultPerKmCents ?? 0), "por km rodado, vazio e carregado"],
+                    ["Receita por km", result.revenuePerKmCents === null ? "—" : formatBRL(result.revenuePerKmCents), "", "frete ÷ todos os km, vazio e carregado"],
+                    ...(result.resultPerDayCents !== null ? [["Resultado por dia", formatBRL(result.resultPerDayCents), resultText(result.resultPerDayCents), "por dia de viagem, com a espera"]] : []),
+                  ].map(([label, value, cls, hint]) => (
                     <div key={label} className="rounded-2xl border border-black/[.05] bg-white p-4 shadow-sm">
                       <p className="text-xs text-[#718078]">{label}</p>
                       <p className={`mt-1 text-lg font-black tabular-nums ${cls}`}>{value}</p>
+                      <p className="mt-1 text-[11px] leading-tight text-[#718078]">{hint}</p>
                     </div>
                   ))}
                 </div>
@@ -421,8 +451,8 @@ export function OfferView() {
 
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Quanto cobrar</h3>
-                  <Row label="Frete mínimo para empatar" value={result.breakEvenCents === null ? "—" : formatBRL(result.breakEvenCents)} />
-                  {!built.marginMissing ? <Row label="Frete para a sua meta" value={result.targetPriceCents === null ? "—" : formatBRL(result.targetPriceCents)} /> : null}
+                  <Row label="Frete mínimo para empatar" detail="O menor frete em que você não perde dinheiro" value={result.breakEvenCents === null ? "—" : formatBRL(result.breakEvenCents)} />
+                  {!built.marginMissing ? <Row label="Frete para a sua meta" detail="O frete que deixa a margem que você quer" value={result.targetPriceCents === null ? "—" : formatBRL(result.targetPriceCents)} /> : null}
                   {needed !== null ? (
                     <p className={`mt-1 text-sm font-semibold ${needed > 0 ? "text-amber-800" : "text-emerald-800"}`}>
                       {needed > 0 ? `Faltam ${formatBRL(needed)} para a sua meta.` : needed < 0 ? `Sobram ${formatBRL(-needed)} acima da sua meta.` : "O frete está exatamente na sua meta."}
