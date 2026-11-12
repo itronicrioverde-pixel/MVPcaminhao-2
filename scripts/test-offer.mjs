@@ -55,6 +55,14 @@ try{
   assert.equal(full.revenuePerKmCents,1397);
   assert.equal(full.decision,'compensa');
 
+  // 5b. as linhas do cálculo ficam disponíveis para a tela mostrar
+  assert.equal(full.vehicleCostCents,108000,'720 km x R$ 1,50');
+  assert.equal(o.analyzeOffer(base({vehicleCostCentsPerKm:null})).vehicleCostCents,null);
+  assert.equal(full.otherPercentCents,0);
+  const oth=o.analyzeOffer(base({legs:[],tollCents:0,vehicleCostCentsPerKm:0,commissionBp:0,otherPercentBp:250,freight:{kind:'fixed',cents:1000000}}));
+  assert.equal(oth.otherPercentCents,25000,'2,5% de R$ 10.000,00');
+  assert.equal(oth.resultCents,1000000-25000);
+
   // 6. preço mínimo: margem sobre o preço, não acréscimo sobre o custo
   const price=(over={})=>({fixedCostsCents:800000,deductionsCents:0,commissionBp:0,commissionBase:'gross',otherPercentBp:0,...over});
   assert.equal(o.minimumPriceCents(price(),2000),1000000,'custo 8.000 e margem 20% = R$ 10.000,00');
@@ -123,6 +131,16 @@ try{
   // 11. entradas inválidas são recusadas, não viram número
   for(const bad of [base({tollCents:-1}),base({tollCents:1.5}),base({tollCents:Number.NaN}),base({commissionBp:-1}),base({legs:[{kind:'empty',km:-5,kmPerLiterCenti:300}]}),base({freight:{kind:'fixed',cents:Infinity}}),base({extraCostsCents:2.5}),base({durationHours:0})])
     assert.throws(()=>o.analyzeOffer(bad),RangeError);
+
+  // 11b. número gigante digitado por engano: erro claro, nunca resultado errado em silêncio
+  for(const huge of [
+    base({freight:{kind:'perTon',rateCentsPerTon:1e11,weightKg:1e11}}),
+    base({legs:[{kind:'loaded',km:1e13,kmPerLiterCenti:200}],dieselPriceMilli:6790}),
+    base({vehicleCostCentsPerKm:1e13,legs:[{kind:'loaded',km:1e13,kmPerLiterCenti:200}]}),
+    base({freight:{kind:'fixed',cents:1e13}}),
+    base({deductionsCents:1e13,commissionBase:'net',freight:{kind:'fixed',cents:2e13}}),
+  ])assert.throws(()=>o.analyzeOffer(huge),RangeError);
+  assert.throws(()=>o.averageKmPerLiterCenti([{km:1e13,litersMilli:1}]),RangeError);
 
   // 12. dinheiro sempre inteiro, sem sobra de ponto flutuante
   for(const r of [fuel,full,noKpl,loss]){for(const v of [r.knownCostsCents,r.resultCents,r.commissionCents])assert.ok(Number.isInteger(v));}

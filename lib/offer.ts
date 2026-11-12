@@ -60,7 +60,9 @@ export type OfferResult = {
   fuelCostCents: number | null;
   /** Soma só dos custos conhecidos (sem a comissão). */
   knownCostsCents: number;
+  vehicleCostCents: number | null;
   commissionCents: number;
+  otherPercentCents: number;
   /** Provisório enquanto `complete` for false. */
   resultCents: number;
   marginBp: number | null;
@@ -91,6 +93,14 @@ function assertInt(name: string, value: unknown, min = 0): asserts value is numb
   }
 }
 
+/** Multiplica inteiros e recusa o resultado que passa do limite seguro, em vez de errar o centavo em silêncio. */
+function mul(a: number, b: number) {
+  const product = a * b;
+  // folga de 4x: o arredondamento da divisão dobra o numerador
+  if (!Number.isSafeInteger(product) || Math.abs(product) > Number.MAX_SAFE_INTEGER / 4) throw new RangeError("valor grande demais");
+  return product;
+}
+
 /** Divisão inteira arredondando meio para cima (afastando do zero). */
 function roundDiv(numerator: number, denominator: number) {
   const sign = numerator < 0 ? -1 : 1;
@@ -104,7 +114,7 @@ export function freightCents(freight: FreightInput) {
   }
   assertInt("tarifa por tonelada", freight.rateCentsPerTon);
   assertInt("peso em kg", freight.weightKg);
-  return roundDiv(freight.rateCentsPerTon * freight.weightKg, 1000);
+  return roundDiv(mul(freight.rateCentsPerTon, freight.weightKg), 1000);
 }
 
 /** Média do ciclo: soma dos km sobre soma dos litros, nunca a média simples dos rendimentos. */
@@ -112,7 +122,7 @@ export function averageKmPerLiterCenti(cycles: { km: number; litersMilli: number
   const km = cycles.reduce((sum, cycle) => sum + cycle.km, 0);
   const litersMilli = cycles.reduce((sum, cycle) => sum + cycle.litersMilli, 0);
   if (litersMilli <= 0) return null;
-  return roundDiv(km * 100 * 1000, litersMilli);
+  return roundDiv(mul(km, 100000), litersMilli);
 }
 
 function legFuel(leg: Leg, dieselPriceMilli: number | null): LegResult {
@@ -124,8 +134,8 @@ function legFuel(leg: Leg, dieselPriceMilli: number | null): LegResult {
   return {
     kind: leg.kind,
     km: leg.km,
-    litersMilli: consumption === null ? null : roundDiv(leg.km * 100 * 1000, consumption),
-    costCents: consumption === null || price === null ? null : roundDiv(leg.km * 10 * price, consumption),
+    litersMilli: consumption === null ? null : roundDiv(mul(leg.km, 100000), consumption),
+    costCents: consumption === null || price === null ? null : roundDiv(mul(mul(leg.km, 10), price), consumption),
   };
 }
 
@@ -140,9 +150,9 @@ type PriceParams = {
 function resultAt(price: number, p: PriceParams) {
   const net = price - p.deductionsCents;
   const commissionBase = p.commissionBase === "net" ? Math.max(0, net) : price;
-  const commission = roundDiv(commissionBase * p.commissionBp, 10000);
-  const other = roundDiv(price * p.otherPercentBp, 10000);
-  return { commission, result: net - p.fixedCostsCents - commission - other };
+  const commission = roundDiv(mul(commissionBase, p.commissionBp), 10000);
+  const other = roundDiv(mul(price, p.otherPercentBp), 10000);
+  return { commission, other, result: net - p.fixedCostsCents - commission - other };
 }
 
 /**
@@ -153,11 +163,11 @@ function resultAt(price: number, p: PriceParams) {
 export function minimumPriceCents(p: PriceParams, marginBp: number) {
   const divisor = 10000 - p.commissionBp - p.otherPercentBp - marginBp;
   if (divisor <= 0) return null;
-  const commissionOnDeductions = p.commissionBase === "net" ? roundDiv(p.deductionsCents * p.commissionBp, 10000) : 0;
+  const commissionOnDeductions = p.commissionBase === "net" ? roundDiv(mul(p.deductionsCents, p.commissionBp), 10000) : 0;
   const numerator = p.fixedCostsCents + p.deductionsCents - commissionOnDeductions;
-  let price = Math.max(0, Math.floor((numerator * 10000) / divisor) - 3);
+  let price = Math.max(0, Math.floor(mul(numerator, 10000) / divisor) - 3);
   for (let step = 0; step < 1000; step += 1, price += 1) {
-    if (resultAt(price, p).result * 10000 >= marginBp * price) return price;
+    if (mul(resultAt(price, p).result, 10000) >= mul(marginBp, price)) return price;
   }
   return null;
 }
@@ -179,7 +189,7 @@ export function analyzeOffer(input: OfferInput): OfferResult {
   const fuelKnown = legs.every((leg) => leg.costCents !== null);
   const fuelCostCents = fuelKnown ? legs.reduce((sum, leg) => sum + (leg.costCents ?? 0), 0) : null;
   const fuelLitersMilli = legs.every((leg) => leg.litersMilli !== null) ? legs.reduce((sum, leg) => sum + (leg.litersMilli ?? 0), 0) : null;
-  const vehicleCostCents = input.vehicleCostCentsPerKm === null ? null : input.vehicleCostCentsPerKm * totalKm;
+  const vehicleCostCents = input.vehicleCostCentsPerKm === null ? null : mul(input.vehicleCostCentsPerKm, totalKm);
 
   const knownCostsCents =
     legs.reduce((sum, leg) => sum + (leg.costCents ?? 0), 0) +
@@ -194,7 +204,7 @@ export function analyzeOffer(input: OfferInput): OfferResult {
     commissionBase: input.commissionBase,
     otherPercentBp: input.otherPercentBp,
   };
-  const { commission, result } = resultAt(gross, params);
+  const { commission, other, result } = resultAt(gross, params);
 
   const pending: Pending[] = [];
   const add = (code: PendingCode) => pending.push({ code, message: PENDING_MESSAGES[code] });
@@ -211,7 +221,7 @@ export function analyzeOffer(input: OfferInput): OfferResult {
   let decision: Decision;
   if (gross <= 0) decision = result < 0 ? "prejuizo" : "sem_frete";
   else if (result < 0) decision = "prejuizo";
-  else if (result * 10000 >= input.targetMarginBp * gross) decision = "compensa";
+  else if (mul(result, 10000) >= mul(input.targetMarginBp, gross)) decision = "compensa";
   else decision = "abaixo_da_meta";
 
   return {
@@ -221,12 +231,14 @@ export function analyzeOffer(input: OfferInput): OfferResult {
     fuelLitersMilli,
     fuelCostCents,
     knownCostsCents,
+    vehicleCostCents,
     commissionCents: commission,
+    otherPercentCents: other,
     resultCents: result,
-    marginBp: gross > 0 ? roundDiv(result * 10000, gross) : null,
+    marginBp: gross > 0 ? roundDiv(mul(result, 10000), gross) : null,
     revenuePerKmCents: totalKm > 0 ? roundDiv(gross, totalKm) : null,
     resultPerKmCents: totalKm > 0 ? roundDiv(result, totalKm) : null,
-    resultPerDayCents: input.durationHours ? roundDiv(result * 24, input.durationHours) : null,
+    resultPerDayCents: input.durationHours ? roundDiv(mul(result, 24), input.durationHours) : null,
     breakEvenCents,
     targetPriceCents,
     decision,

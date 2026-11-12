@@ -37,6 +37,9 @@ jobs:
       - name: Test offer analysis engine
         run: node scripts/test-offer.mjs
 
+      - name: Test offer form parsing
+        run: node scripts/test-offer-form.mjs
+
       - name: Test company logo
         run: node scripts/test-logo.mjs
 

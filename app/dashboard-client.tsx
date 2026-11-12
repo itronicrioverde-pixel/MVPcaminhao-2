@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Settings, Pencil, BarChart3, CalendarDays, ChevronRight, CircleDollarSign, LayoutDashboard, Map, MapPin, Menu, Plus, ReceiptText, Route, Scale, Search, Trash2, TrendingDown, TrendingUp, Truck, Users, Wallet, X } from "lucide-react";
+import { Calculator, Settings, Pencil, BarChart3, CalendarDays, ChevronRight, CircleDollarSign, LayoutDashboard, Map, MapPin, Menu, Plus, ReceiptText, Route, Scale, Search, Trash2, TrendingDown, TrendingUp, Truck, Users, Wallet, X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, ReferenceLine, Tooltip, XAxis, YAxis, type DotItemDotProps } from "recharts";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Toaster } from "@/components/ui/sonner";
 
+import {OfferView} from "./offer-view";
 import {FinanceEditDialog,TripEditor,RevenueDialog,RevenueList,AdminView} from "./management";
 import {httpApi,ApiError} from "@/lib/api-client";
 import {driverCommission,type Trip,type Expense,type Revenue,type Company} from "@/lib/finance";
@@ -18,7 +19,7 @@ import {tripCost,tripProfit,loadLoss,resultLabel,totals,monthlySeries,expenseBre
 import {parseRecordsPayload} from "@/lib/records-payload";
 import {saveThenRefresh,errorMessage,REFRESH_FAILED_MESSAGE,DELETE_REFRESH_FAILED_MESSAGE} from "@/lib/records-save";
 import {createMountState,createLatestRequest,canApplyResponse} from "@/lib/records-load";
-type View = "painel" | "viagens" | "financeiro" | "rotas" | "clientes" | "admin";
+type View = "painel" | "frete" | "viagens" | "financeiro" | "rotas" | "clientes" | "admin";
 type MonthlyPoint = { month: string; Faturamento: number; Despesas: number; Resultado: number };
 type Slice = { name: string; value: number };
 type TripProfitPoint = { name: string; data: string; lucro: number };
@@ -31,8 +32,8 @@ const chartDomain: [(value:number)=>number,(value:number)=>number] = [(min:numbe
 const compactMoney = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const SIGN_IN_URL = "/signin-with-chatgpt?return_to=%2F";
 const pieColors = ["#0d5c43", "#f4a825", "#df694d", "#4d82a8", "#8c6bb1", "#718078"];
-const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
-  { id: "painel", label: "Painel", icon: LayoutDashboard }, { id: "viagens", label: "Viagens", icon: Truck },
+const navItems: { id: View; label: string; short?: string; icon: typeof LayoutDashboard }[] = [
+  { id: "painel", label: "Painel", icon: LayoutDashboard }, { id: "frete", label: "Analisar frete", short: "Frete", icon: Calculator }, { id: "viagens", label: "Viagens", icon: Truck },
   { id: "financeiro", label: "Financeiro", icon: Wallet }, { id: "rotas", label: "Rotas", icon: Route },
   { id: "clientes", label: "Clientes", icon: Users }, {id:"admin",label:"Admin",icon:Settings},
 ];
@@ -138,9 +139,9 @@ export default function DashboardClient({ displayName }: { displayName: string }
     {menuOpen && <button className="fixed inset-0 z-30 bg-black/45 lg:hidden" onClick={() => setMenuOpen(false)} aria-label="Fechar menu" />}
     <main className="min-h-screen pb-24 lg:ml-[272px] lg:pb-8">
       <header className="sticky top-0 z-20 border-b border-black/[.06] bg-[#f2f4f3]/90 px-4 py-3 backdrop-blur-xl sm:px-7 lg:px-9"><div className="app-topbar mx-auto flex max-w-[1500px] items-center gap-3"><button className="grid size-11 place-items-center rounded-xl bg-white shadow-sm lg:hidden" onClick={() => setMenuOpen(true)} aria-label="Abrir menu"><Menu /></button><div className="min-w-0 flex-1"><p className="text-sm text-[#708078]">Financeiro de viagens</p><h1 className="truncate text-xl font-bold sm:text-2xl">{navItems.find((item) => item.id === view)?.label}</h1></div><Select value={year} onValueChange={(value) => value && setYear(value)}><SelectTrigger className="h-11 w-[110px] rounded-xl bg-white"><CalendarDays className="size-4" /><SelectValue /></SelectTrigger><SelectContent>{years.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><Button className="h-11 shrink-0 rounded-xl" onClick={()=>{setEditing(null);setTripOpen(true);}}><Plus/>Nova viagem</Button><TripEditor open={tripOpen} setOpen={setTripOpen} trip={editing} history={trips} onSaved={reloadData}/></div></header>
-      <div className="mx-auto max-w-[1500px] p-4 sm:p-7 lg:p-9">{sessionExpired && !error ? <SessionExpiredBanner /> : null}{loading ? <Loading /> : error ? <ErrorState message={error} retry={reloadData} session={sessionExpired} /> : <>{view === "painel" && <DashboardView revenue={revenue} costs={costs} profit={profit} margin={margin} totalKm={totalKm} trips={filteredTrips} monthly={monthly} expenseBreakdown={expenseBreakdown} profitByTrip={profitByTrip} onTrip={() => {setEditing(null);setTripOpen(true);}} />}{view === "viagens" && <TripsView trips={filteredTrips} search={search} setSearch={setSearch} onEdit={(trip)=>{setEditing(trip);setTripOpen(true);}} onRemove={(id) => remove("trip", id)} />}{view === "financeiro" && <><FinanceView onEdit={(item:Expense)=>setFinanceEditing({kind:"expense",item})} onRevenue={()=>setRevenueOpen(true)} expenses={filteredExpenses} breakdown={expenseBreakdown} monthly={monthly} revenue={revenue} costs={costs} profit={profit} onCreate={() => setExpenseOpen(true)} onRemove={(id:string) => remove("expense", id)} /><RevenueList onEdit={item=>setFinanceEditing({kind:"revenue",item})} items={filteredRevenues} onRemove={id=>remove("revenue",id)}/></>}{view === "rotas" && <RoutesView routes={routeRanking} />}{view === "clientes" && <ClientsView clients={clientSummary} />}{view==="admin"&&<AdminView company={company} trips={trips} expenses={expenses} revenues={revenues} onSaved={reloadData}/>}</>}</div>
+      <div className="mx-auto max-w-[1500px] p-4 sm:p-7 lg:p-9">{sessionExpired && !error ? <SessionExpiredBanner /> : null}{view === "frete" ? <OfferView /> : loading ? <Loading /> : error ? <ErrorState message={error} retry={reloadData} session={sessionExpired} /> : <>{view === "painel" && <DashboardView revenue={revenue} costs={costs} profit={profit} margin={margin} totalKm={totalKm} trips={filteredTrips} monthly={monthly} expenseBreakdown={expenseBreakdown} profitByTrip={profitByTrip} onTrip={() => {setEditing(null);setTripOpen(true);}} />}{view === "viagens" && <TripsView trips={filteredTrips} search={search} setSearch={setSearch} onEdit={(trip)=>{setEditing(trip);setTripOpen(true);}} onRemove={(id) => remove("trip", id)} />}{view === "financeiro" && <><FinanceView onEdit={(item:Expense)=>setFinanceEditing({kind:"expense",item})} onRevenue={()=>setRevenueOpen(true)} expenses={filteredExpenses} breakdown={expenseBreakdown} monthly={monthly} revenue={revenue} costs={costs} profit={profit} onCreate={() => setExpenseOpen(true)} onRemove={(id:string) => remove("expense", id)} /><RevenueList onEdit={item=>setFinanceEditing({kind:"revenue",item})} items={filteredRevenues} onRemove={id=>remove("revenue",id)}/></>}{view === "rotas" && <RoutesView routes={routeRanking} />}{view === "clientes" && <ClientsView clients={clientSummary} />}{view==="admin"&&<AdminView company={company} trips={trips} expenses={expenses} revenues={revenues} onSaved={reloadData}/>}</>}</div>
     </main>
-    <nav className="mobile-navigation fixed inset-x-3 bottom-3 z-30 grid grid-cols-6 rounded-2xl border border-white/40 bg-[#10251f]/95 p-1.5 text-white shadow-2xl backdrop-blur-xl lg:hidden" aria-label="Navegação mobile">{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] ${view === item.id ? "bg-[#f4a825] font-bold text-[#10251f]" : "text-white/65"}`}><Icon className="size-5" />{item.label}</button>; })}</nav>
+    <nav className="mobile-navigation fixed inset-x-3 bottom-3 z-30 grid grid-cols-7 rounded-2xl border border-white/40 bg-[#10251f]/95 p-1.5 text-white shadow-2xl backdrop-blur-xl lg:hidden" aria-label="Navegação mobile">{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[10px] ${view === item.id ? "bg-[#f4a825] font-bold text-[#10251f]" : "text-white/65"}`}><Icon className="size-5" />{item.short ?? item.label}</button>; })}</nav>
     <FinanceEditDialog record={financeEditing} onClose={()=>setFinanceEditing(null)} onSaved={reloadData}/><RevenueDialog open={revenueOpen} setOpen={setRevenueOpen} onSaved={reloadData}/><ExpenseDialog open={expenseOpen} setOpen={setExpenseOpen} saving={saving} category={expenseCategory} setCategory={setExpenseCategory} onSubmit={submitExpense} />
   </div>;
 }
