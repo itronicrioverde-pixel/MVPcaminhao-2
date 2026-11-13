@@ -160,7 +160,9 @@ A ordem é a que mais reduz erro por unidade de trabalho e a que menos mexe em d
 | **Sem informação sobre o recibo** | A retenção **não entra no resultado por padrão**: aparece como estimativa, com quanto o resultado cairia. O dono liga "Contar as retenções estimadas no resultado" quando confirmar no recibo |
 | O app tem que **medir o combustível sozinho**, pelo odômetro ou outra alternativa | Card "Medir meu consumo (odômetro e litros)": de tanque cheio a tanque cheio, separa **carregado**, **vazio** e **misto** (carregado e vazio juntos). O botão "Usar no cálculo" preenche o consumo; no modo rápido calcula a média da viagem com os km vazios e carregados informados. Os registros ficam só no aparelho |
 
-**Ainda não feito:** separar o pedágio em carregado e vazio (cada um com o seu pagador) e guardar as medições de consumo no banco, junto com as viagens, para o app aprender com o tempo.
+**Feito depois:** as medições de consumo agora ficam no banco (tabela `fuel_records`, rota `/api/fuel`), com cópia no aparelho para funcionar sem internet. Fica de fora por enquanto: incluir as medições no backup e no "limpar tudo" da área de administração.
+
+**Pedágio carregado e vazio:** pesquisado na parte 3 de `pesquisa-vale-pedagio-frete-arla.md`. A recomendação é não separar e manter um valor só (pedágio que sai do bolso na viagem toda). Aguardando a concordância do dono antes de mexer no campo.
 
 Confirmado pelo dono: os 80% são sobre o **frete total (bruto)**, não sobre o líquido.
 

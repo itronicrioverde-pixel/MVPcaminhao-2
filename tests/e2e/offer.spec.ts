@@ -10,7 +10,9 @@ function isMobile(page: Page) {
   return (page.viewportSize()?.width ?? 0) < 1024;
 }
 
-async function openOffer(page: Page, mode: "quick" | "detailed" = "detailed") {
+async function openOffer(page: Page, mode: "quick" | "detailed" = "detailed", opts: { keepFuel?: boolean } = {}) {
+  // as medições agora ficam no banco, que dura entre os testes: cada teste começa sem nenhuma
+  if (!opts.keepFuel) expect((await page.request.delete("/api/fuel?all=true")).ok()).toBe(true);
   await page.goto("/");
   const nav = isMobile(page)
     ? page.getByRole("navigation", { name: "Navegação mobile" })
@@ -751,6 +753,64 @@ test("medir consumo: dá para remover um abastecimento e os registros ficam guar
   await openMeasure(page);
   await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(6);
   await expect(measured(page)).toContainText("1,90 km/L");
+});
+
+// ---------- medições guardadas no banco ----------
+
+test("medir consumo: as medições ficam no banco e voltam mesmo sem nada guardado no aparelho", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addExampleFuel(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  const saved = await (await page.request.get("/api/fuel")).json();
+  expect(saved.records).toHaveLength(7);
+
+  await page.evaluate(() => window.localStorage.clear());
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(7);
+  await expect(measured(page)).toContainText("1,90 km/L");
+});
+
+test("medir consumo: remover tira também do banco", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addExampleFuel(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  await page.getByRole("button", { name: "Remover abastecimento 7", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(6);
+  await expect.poll(async () => (await (await page.request.get("/api/fuel")).json()).records.length).toBe(6);
+});
+
+test("medir consumo: sem conexão com o banco guarda no aparelho, avisa e envia depois", async ({ page }) => {
+  await page.route("**/api/fuel", (route) => route.abort());
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await addFuel(page, "100.600", "300", true, "loaded");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
+  await expect(page.getByTestId("fuel-status")).toContainText("só neste aparelho");
+  expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(0);
+
+  await page.unroute("**/api/fuel");
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
+  expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(2);
+});
+
+test("medir consumo: se não deu para apagar no banco, o abastecimento continua na lista", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  await page.route("**/api/fuel?id=*", (route) => route.abort());
+  await page.getByRole("button", { name: "Remover abastecimento 1", exact: true }).click();
+  await expect(page.getByText("Não consegui apagar agora")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(1);
 });
 
 // ---------- perfil fiscal e retenções estimadas ----------

@@ -81,5 +81,22 @@ try{
   // 6. texto em português para preencher o campo
   assert.equal(f.formatKmPerLiter(190),'1,90');assert.equal(f.formatKmPerLiter(170),'1,70');assert.equal(f.formatKmPerLiter(1000),'10,00');
 
-  console.log('PASS: referência da ANTT por eixos, média de viagem com vazio e carregado, medição por odômetro (ciclos de tanque cheio a tanque cheio, parciais, misto à parte, ordem livre, nada inventado sem dois cheios), validação, rendimento implausível e formatação.');
+  // 7. sincronizar o que está no aparelho com o que está no banco
+  const S=(id,km,l=10,full=true,state='loaded')=>({id,odometerKm:km,litersMilli:l*1000,full,state});
+  const plan=f.planFuelSync;
+  let p=plan([S('a',100),S('b',200)],[]);
+  assert.deepEqual(p.merged.map(x=>x.id),['a','b']);assert.deepEqual(p.toUpload.map(x=>x.id),['a','b'],'banco vazio: sobe tudo do aparelho');assert.deepEqual(p.conflicts,[]);
+  p=plan([],[S('a',100),S('b',200)]);
+  assert.deepEqual(p.merged.map(x=>x.id),['a','b']);assert.deepEqual(p.toUpload,[],'aparelho vazio: só baixa');
+  p=plan([S('a',100),S('c',300)],[S('a',100),S('b',200)]);
+  assert.deepEqual(p.merged.map(x=>x.id),['a','b','c'],'junta e ordena por odômetro');assert.deepEqual(p.toUpload.map(x=>x.id),['c'],'sobe só o que o banco não tem');
+  p=plan([S('x',100,99)],[S('a',100,10)]);
+  assert.deepEqual(p.merged.map(x=>x.id),['a'],'mesmo odômetro com id diferente: vale o do banco');assert.deepEqual(p.toUpload,[]);assert.deepEqual(p.conflicts.map(x=>x.id),['x'],'o do aparelho que ficou de fora é avisado');
+  p=plan([S('a',100,5)],[S('a',100,10)]);
+  assert.equal(p.merged[0].litersMilli,10000,'mesmo id: o banco manda');assert.deepEqual(p.toUpload,[]);assert.deepEqual(p.conflicts,[]);
+  p=plan([S('b',200),S('a',100),S('b',200)],[]);
+  assert.deepEqual(p.merged.map(x=>x.id),['a','b'],'repetido no aparelho aparece uma vez');assert.deepEqual(p.toUpload.map(x=>x.id),['a','b']);
+  const input=[S('c',300),S('a',100)],copy=JSON.parse(JSON.stringify(input));plan(input,[S('b',200)]);assert.deepEqual(input,copy,'não altera o que recebe');
+
+  console.log('PASS: referência da ANTT por eixos, média de viagem com vazio e carregado, medição por odômetro (ciclos de tanque cheio a tanque cheio, parciais, misto à parte, ordem livre, nada inventado sem dois cheios), validação, rendimento implausível, formatação e plano de sincronização com o banco.');
 }finally{await rm(temp,{recursive:true,force:true});}

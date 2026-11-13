@@ -50,6 +50,13 @@
       "when": 1788986849163,
       "tag": "0006_slimy_mandroid",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794593837129,
+      "tag": "0007_tired_shooting_star",
+      "breakpoints": true
     }
   ]
 }

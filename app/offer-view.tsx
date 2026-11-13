@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
+import { ApiError, httpApi } from "@/lib/api-client";
+import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, planFuelSync, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
 import { analyzeOffer, costPerKmFromYear, type Decision, type OfferResult } from "@/lib/offer";
 import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, parseKm, parseLiters, parseMoney, type OfferForm } from "@/lib/offer-form";
 
@@ -216,6 +217,8 @@ export function OfferView() {
   const [fuelFull, setFuelFull] = useState(true);
   const [fuelState, setFuelState] = useState<"loaded" | "empty">("loaded");
   const [fuelError, setFuelError] = useState<string | null>(null);
+  // "saved": está no banco; "local": só neste aparelho por enquanto (sem conexão ou sem login)
+  const [fuelStatus, setFuelStatus] = useState<"checking" | "saved" | "local">("checking");
   const [fuelUsed, setFuelUsed] = useState<string | null>(null);
   const [yearSpend, setYearSpend] = useState("");
   const [yearKm, setYearKm] = useState("");
@@ -239,6 +242,25 @@ export function OfferView() {
     }
   }, [fuelRecords]);
 
+  // Ao abrir: busca o que está no banco, junta com o que está no aparelho e envia o que faltar.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { records: remote } = await httpApi.get<{ records: StoredFuel[] }>("/api/fuel");
+        const plan = planFuelSync(loadFuelRecords(), remote);
+        if (plan.toUpload.length > 0) await httpApi.put("/api/fuel", { records: plan.toUpload });
+        if (cancelled) return;
+        setFuelRecords(plan.merged);
+        setFuelStatus("saved");
+        if (plan.conflicts.length > 0) setFuelError(`${plan.conflicts.length} abastecimento(s) deste aparelho ficaram de fora porque já havia outro com o mesmo odômetro salvo.`);
+      } catch {
+        if (!cancelled) setFuelStatus("local");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const consumption = useMemo(() => (validateFuelRecords(fuelRecords).length === 0 ? measureConsumption(fuelRecords) : null), [fuelRecords]);
 
   function addFuelRecord() {
@@ -253,6 +275,34 @@ export function OfferView() {
     setFuelRecords(next);
     setFuelOdometer("");
     setFuelLiters("");
+    const added = next[next.length - 1];
+    setFuelStatus("checking");
+    httpApi.post("/api/fuel", added).then(
+      () => setFuelStatus("saved"),
+      (error) => {
+        if (error instanceof ApiError && error.status === 409) {
+          setFuelError("Esse odômetro já está salvo no banco. Remova o antigo antes, se quiser trocar.");
+          setFuelRecords((current) => current.filter((item) => item.id !== added.id));
+          setFuelStatus("saved");
+        } else {
+          setFuelStatus("local");
+        }
+      },
+    );
+  }
+
+  async function removeFuelRecord(id: string) {
+    try {
+      await httpApi.del(`/api/fuel?id=${encodeURIComponent(id)}`);
+    } catch (error) {
+      // 404: nunca chegou ao banco, então só some daqui. Qualquer outro erro: mantém, para não voltar sozinho depois.
+      if (!(error instanceof ApiError && error.status === 404)) {
+        setFuelError("Não consegui apagar agora. Verifique a conexão e tente de novo.");
+        return;
+      }
+    }
+    setFuelError(null);
+    setFuelRecords((current) => current.filter((item) => item.id !== id));
   }
 
   function useMeasured() {
@@ -428,6 +478,9 @@ export function OfferView() {
                 <div className="flex items-end"><CheckField label="Encheu o tanque até o máximo" checked={fuelFull} onChange={setFuelFull} /></div>
               </div>
               {fuelError ? <p className="font-semibold text-red-700">{fuelError}</p> : null}
+              <p data-testid="fuel-status" className="text-xs text-slate-600">
+                {fuelStatus === "saved" ? "Salvo na sua conta." : fuelStatus === "local" ? "Salvo só neste aparelho por enquanto. Envio para a sua conta quando a conexão voltar e você abrir esta tela." : "Verificando…"}
+              </p>
               <button type="button" onClick={addFuelRecord} className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white">Adicionar abastecimento</button>
 
               {fuelRecords.length > 0 ? (
@@ -440,7 +493,7 @@ export function OfferView() {
                       <button
                         type="button"
                         aria-label={`Remover abastecimento ${index + 1}`}
-                        onClick={() => setFuelRecords((current) => current.filter((item) => item.id !== record.id))}
+                        onClick={() => void removeFuelRecord(record.id)}
                         className="min-h-11 min-w-11 rounded-lg text-lg font-bold text-red-700"
                       >
                         ×

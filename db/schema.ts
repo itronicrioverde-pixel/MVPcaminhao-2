@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const trips = sqliteTable("trips", {
   id: text("id").primaryKey(),
@@ -50,3 +50,9 @@ export const companies = sqliteTable("companies", {
 export const routeLimits = sqliteTable("route_limits", {
  id: text("id").primaryKey(), nextAt: integer("next_at").notNull(),
 });
+export const fuelRecords = sqliteTable("fuel_records", {
+ id: text("id").notNull(), ownerId: text("owner_id").notNull(),
+ odometerKm: integer("odometer_km").notNull(), litersMilli: integer("liters_milli").notNull(),
+ full: integer("full").notNull().default(1), state: text("state").notNull(),
+ createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, t => [primaryKey({ columns: [t.ownerId, t.id] }), uniqueIndex("uq_fuel_owner_odometer").on(t.ownerId, t.odometerKm)]);

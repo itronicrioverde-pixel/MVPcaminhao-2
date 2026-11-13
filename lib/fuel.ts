@@ -129,3 +129,27 @@ export function isPlausibleKmPerLiter(kmPerLiterCenti: number) {
 export function formatKmPerLiter(kmPerLiterCenti: number) {
   return `${Math.floor(kmPerLiterCenti / 100)},${String(kmPerLiterCenti % 100).padStart(2, "0")}`;
 }
+
+/** Abastecimento guardado, com o identificador usado para não duplicar entre aparelho e banco. */
+export type SyncedFuel = FuelRecord & { id: string };
+
+/**
+ * Junta o que está no aparelho com o que está no banco.
+ * O banco manda: mesmo id ou mesmo odômetro já existente lá vence o do aparelho.
+ * `toUpload` é o que só existe no aparelho; `conflicts` é o que foi descartado por já haver outro com o mesmo odômetro.
+ */
+export function planFuelSync(local: SyncedFuel[], remote: SyncedFuel[]) {
+  const byId = new Map<string, SyncedFuel>();
+  const byOdometer = new Map<number, SyncedFuel>();
+  for (const r of remote) { byId.set(r.id, r); byOdometer.set(r.odometerKm, r); }
+  const toUpload: SyncedFuel[] = [];
+  const conflicts: SyncedFuel[] = [];
+  for (const l of local) {
+    if (byId.has(l.id)) continue;
+    if (byOdometer.has(l.odometerKm)) { conflicts.push(l); continue; }
+    byId.set(l.id, l); byOdometer.set(l.odometerKm, l); toUpload.push(l);
+  }
+  const merged = [...byId.values()].sort((a, b) => a.odometerKm - b.odometerKm);
+  toUpload.sort((a, b) => a.odometerKm - b.odometerKm);
+  return { merged, toUpload, conflicts };
+}

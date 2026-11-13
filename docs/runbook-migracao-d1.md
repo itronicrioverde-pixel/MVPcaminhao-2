@@ -4,13 +4,13 @@ Repositório: `itronicrioverde-pixel/MVPcaminhao-2` · Projeto Sites: `.openai/h
 
 ## Estado de verificação
 
-- **A aplicação de migrações no D1 de produção não foi observada nem confirmada.** O build empacota `dist/.openai/drizzle/` (7 migrações + `meta/_journal.json`) junto com `hosting.json`, um fato observável no repositório; mas **não há evidência verificável de que o pipeline do Sites aplica essas migrações em produção**. A etapa de aplicação em produção está **pendente de verificação**, e nenhum passo deste runbook presume que ela ocorre automaticamente.
+- **A aplicação de migrações no D1 de produção não foi observada nem confirmada.** O build empacota `dist/.openai/drizzle/` (8 migrações + `meta/_journal.json`) junto com `hosting.json`, um fato observável no repositório; mas **não há evidência verificável de que o pipeline do Sites aplica essas migrações em produção**. A etapa de aplicação em produção está **pendente de verificação**, e nenhum passo deste runbook presume que ela ocorre automaticamente.
 - Execução prevista para o **proprietário do site**, que tem acesso ao console (`chatgpt.com/sites`) e à sessão autenticada.
 
 ## Premissas verificadas (evidência no repositório)
 
 - `dist/server/wrangler.json` usa `database_id` **placeholder** (`00000000-0000-4000-8000-000000000000`): o D1/R2 reais são injetados pelo controle do ChatGPT Sites somente na publicação. **`wrangler d1 execute DB --remote` NÃO é aplicável/confirmado para produção neste projeto.** Os comandos abaixo usam apenas `--local` (banco de ensaio).
-- O build empacota `dist/.openai/drizzle/` (7 migrações + `meta/_journal.json`) junto com `hosting.json`. Isso **documenta as migrações no artefato publicado**, mas não demonstra o mecanismo de aplicação em produção.
+- O build empacota `dist/.openai/drizzle/` (8 migrações + `meta/_journal.json`) junto com `hosting.json`. Isso **documenta as migrações no artefato publicado**, mas não demonstra o mecanismo de aplicação em produção.
 - Publicação do Sites tem duas etapas (salvar versão → publicar); cada publicação é produção.
 
 ## 1. Qual banco é o destino e como confirmar a identidade
@@ -51,10 +51,11 @@ PRAGMA index_list('revenues');
 | `0004_melodic_stryfe` | `trips.driver_percent` | coluna presente |
 | `0005_normal_turbo` | `trips.freight_per_ton` | coluna presente |
 | `0006_slimy_mandroid` | `trips.loss_alert_percent` | coluna presente |
+| `0007_tired_shooting_star` | tabela `fuel_records` (medições de combustível) e índice `uq_fuel_owner_odometer` | `fuel_records` existe e `PRAGMA index_list('fuel_records')` mostra o índice. **Sem aplicar esta migração em produção, a tela de medir consumo cai para o modo só neste aparelho, sem erro.** |
 
 ## 3. Decisão por migração (nunca pular nem repetir arquivos automaticamente)
 
-Ordem canônica = ordem do `drizzle/meta/_journal.json` (`0000` → `0006`). **Nenhuma migração é idempotente** (CREATE TABLE/INDEX e ALTER ADD falham se repetidas). Antes de aplicar um arquivo, verificar **todos** os objetos e colunas esperados da tabela acima (não apenas um):
+Ordem canônica = ordem do `drizzle/meta/_journal.json` (`0000` → `0007`). **Nenhuma migração é idempotente** (CREATE TABLE/INDEX e ALTER ADD falham se repetidas). Antes de aplicar um arquivo, verificar **todos** os objetos e colunas esperados da tabela acima (não apenas um):
 
 - **Nenhum objeto/coluna da migração aplicado**: aplicar conforme o procedimento validado (seção 5), somente.
 - **Todos os objetos/colunas aplicados**: registrar a migração como **concluída** (não reaplicar).
@@ -74,7 +75,7 @@ Usa um D1 **local separado** (`.wrangler/scratch`), com o artefato já buildado 
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/scratch --file drizzle/0000_narrow_blazing_skull.sql
 ```
 
-Repetir para `0001`…`0006` na ordem (ou em loop com `Get-ChildItem drizzle\*.sql | Sort-Object Name`). Depois, rodar as sondagens da seção 2 e conferir que **todos** os objetos/colunas por migração (tabela da seção 2) e o schema final batem com `db/schema.ts`.
+Repetir para `0001`…`0007` na ordem (ou em loop com `Get-ChildItem drizzle\*.sql | Sort-Object Name`). Depois, rodar as sondagens da seção 2 e conferir que **todos** os objetos/colunas por migração (tabela da seção 2) e o schema final batem com `db/schema.ts`.
 
 O pipeline local do E2E já executa o mesmo ensaio de baseline vazio localmente: `npm run test:e2e:migrate` (o CI aplica as 7 migrações em `.wrangler/e2e`, apenas local).
 

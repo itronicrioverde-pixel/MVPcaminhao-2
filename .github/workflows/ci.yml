@@ -43,6 +43,9 @@ jobs:
       - name: Test fuel measurement and ANTT reference
         run: node scripts/test-fuel.mjs
 
+      - name: Test fuel measurements API
+        run: node scripts/test-fuel-api.mjs
+
       - name: Test company logo
         run: node scripts/test-logo.mjs
 

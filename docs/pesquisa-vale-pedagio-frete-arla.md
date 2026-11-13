@@ -259,3 +259,60 @@ Do setor (usar como pista):
 - [Consumo de ARLA 32 está 45% abaixo do estimado, SETCESP](https://setcesp.org.br/noticias/consumo-de-arla-32-esta-45-abaixo-do-estimado-e-preocupa-mercado/)
 - [ARLA 32: o que é e para que serve, Contmatic](https://simplifique.contmatic.com.br/blogs/arla-32-o-que-e-para-que-serve)
 - [Actros 2646 LS 6x4 (E5), lista FIPE](https://magodoscarros.com/fipe/caminhoes/mercedes-benz/actros-2646-ls-6x4-2p-diesel-e5)
+
+---
+
+# Parte 3 — Vale separar o pedágio em "carregado" e "vazio"?
+
+Pergunta do dono: a viagem até o ponto de coleta é vazia, mas ele quase nunca pega um frete tão longe a ponto de pagar pedágio só para buscá-lo. Então separar o pedágio em carregado e vazio faz sentido?
+
+## O que o argumento do dono acerta
+
+- A coleta é um trecho vazio, mas o dono escolhe o frete. Se buscar a carga já custaria pedágio, ele tende a recusar. Na prática, pedágio na ida até a coleta é raro. O app não precisa de um campo só para isso.
+- Para o pedágio da coleta, o dono já sabe a resposta antes de aceitar. Ele não precisa de uma conta para isso.
+
+## O que o argumento deixa de fora
+
+O trecho vazio que mais pesa não é a coleta, é a **volta depois de descarregar**. O contrato obriga o caminhão a circular vazio na volta (resposta do dono, 13/11), e é nesse trecho que pode haver pedágio.
+
+O que está certo e o que não achei:
+
+| Ponto | O que achei | Fonte |
+|---|---|---|
+| Quem paga o pedágio da volta vazia, quando o contrato obriga a circular vazio | O contratante paga o vale-pedágio nesse caso, se o contrato obriga o caminhão a circular vazio. O contrato não pode abrir mão disso. | Oficial (FAQ da ANTT do vale-pedágio, já citada na parte 1) |
+| Se o contratante cumpre isso na prática | Não achei dado. Pelo que o dono diz, ele combina antes de aceitar quem paga. | Dono (não confirmado por fonte) |
+| Isenção de pedágio nos eixos suspensos quando vazio | Existe (Lei 13.711/2018), mas o veículo só é tratado como vazio se o MDF-e estiver encerrado. Há projeto de lei em andamento para mudar a prova; não achei se foi aprovado. | Lei, via sites do setor (COAD, SETCESP). Não consegui abrir o texto no Planalto. |
+| Quanto da quilometragem dos caminhões brasileiros é vazia | Números muito diferentes: 16% a 19% das empresas rodam vazias em boa parte dos km (CNT); reportagens falam em 25% a 40% das viagens. Sem metodologia clara. | Setor e imprensa, usar só como pista |
+| Distância média da coleta (quanto o caminhão roda vazio até buscar a carga) | **Não achei.** Nenhum estudo que eu tenha encontrado traz isso. | — |
+
+Ou seja: o argumento do dono sobre a coleta fica sem prova independente, mas bate com o que se sabe do jeito de contratar, e a decisão não depende dele.
+
+## Quanto isso mexe no resultado
+
+Com o caso de exemplo do app (já testado):
+
+- Esquecer o pedágio inteiro derruba a margem em cerca de **6 pontos percentuais**.
+- Errar o valor do pedágio em 10% mexe cerca de **0,4 ponto percentual**.
+
+Ou seja: o que importa é **não esquecer** o pedágio que sai do bolso do dono. Dividir em duas caixas não melhora a precisão do cálculo; só obriga o dono a informar duas contas, quando ele já combina o total antes de aceitar.
+
+## Recomendação
+
+1. **Não dividir o campo.** Manter um valor só de pedágio.
+2. Deixar claro, no texto de ajuda, que o valor é **o pedágio que sai do seu bolso na viagem toda: coleta, trecho carregado e volta vazia**. Quando o contratante paga, o dono marca isso e o app não conta.
+3. Não calcular desconto de eixo suspenso sozinho: depende do MDF-e e da praça, e o dono pode simplesmente digitar o valor que realmente paga.
+4. Guardar para depois, se o uso mostrar necessidade: lembrar o pedágio por rota (origem e destino), para o dono não digitar de novo.
+
+Se, usando o app, o dono perceber que a volta vazia com pedágio é frequente e quiser conferir isso à parte, aí sim vale separar. Hoje não há motivo nem dado para fazer isso.
+
+## Fontes desta parte
+
+Oficial:
+- FAQ da ANTT do vale-pedágio (já citada acima), sobre veículo vazio e contrato que obriga a circular vazio.
+
+Do setor ou imprensa (usar como pista):
+- [Lei 13.711/2018, eixos suspensos, COAD](https://www.coad.com.br/home/noticias-detalhe/88662/publicada-lei-sobre-isencao-de-pedagio-para-caminhoes-com-eixos-suspensos)
+- [Isenção de pedágio para eixos suspensos, SETCESP](https://setcesp.org.br/noticias/temer-publica-lei-que-da-isencao-de-pedagio-para-eixos-suspensos-de-caminhoes-vazios/)
+- [Projeto de lei sobre cobrança de eixo suspenso, Câmara dos Deputados](https://www.camara.leg.br/noticias/1133807-projeto-muda-regra-de-cobranca-de-pedagio-para-caminhao-com-eixo-suspenso/)
+- [Caminhões vazios e ociosidade, Mundo Logística](https://mundologistica.com.br/noticias/custo-caminhao-vazio-ociosidade-gera-perdas-bilionarias-transporte)
+- [Sondagem CNT de eficiência energética no transporte rodoviário de cargas](https://repositorio.itl.org.br/jspui/bitstream/123456789/184/2/Sondagem%20CNT%20de%20Efici%c3%aancia%20Energ%c3%a9tica%20no%20Transporte%20Rodovi%c3%a1rio%20de%20Cargas%20-%20Pricipais%20dados.pdf)
