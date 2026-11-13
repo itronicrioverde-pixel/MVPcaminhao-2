@@ -40,6 +40,9 @@ jobs:
       - name: Test offer form parsing
         run: node scripts/test-offer-form.mjs
 
+      - name: Test fuel measurement and ANTT reference
+        run: node scripts/test-fuel.mjs
+
       - name: Test company logo
         run: node scripts/test-logo.mjs
 

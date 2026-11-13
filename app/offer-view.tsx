@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, formatKmPerLiter } from "@/lib/fuel";
 import { analyzeOffer, costPerKmFromYear, type Decision, type OfferResult } from "@/lib/offer";
 import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, parseKm, parseMoney, type OfferForm } from "@/lib/offer-form";
 
 // Só o que é do caminhão e do jeito de trabalhar fica guardado neste aparelho.
 // O que é da oferta (frete, quilômetros, pedágio, duração) começa vazio a cada análise.
 const STORAGE_KEY = "rota-financeira:analise-de-frete:v1";
-const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "kplAvg", "diesel", "vehicleKm", "vehicleKmAll", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost", "advance", "balanceDays"] as const;
+const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "kplAvg", "diesel", "vehicleKm", "vehicleKmAll", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost", "advance", "balanceDays", "axles"] as const;
 
 const ANTT_CALCULATOR = "https://calculadorafrete.antt.gov.br/";
 
@@ -80,6 +81,46 @@ function CheckField({ label, checked, onChange }: { label: string; checked: bool
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="size-5 accent-[#0d5c43]" />
       {label}
     </label>
+  );
+}
+
+function AxlesSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div>
+      <label htmlFor="offer-axles" className="text-sm font-semibold text-[#34443e]">Eixos do conjunto</label>
+      <select
+        id="offer-axles"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-2 h-12 w-full rounded-xl border border-input bg-white px-3 text-base"
+      >
+        {[2, 3, 4, 5, 6, 7, 8, 9].map((count) => <option key={count} value={String(count)}>{count} eixos</option>)}
+      </select>
+      <p className="mt-1 text-xs text-[#718078]">Conte os eixos do cavalo e da carreta juntos. Cavalo 6x4 com carreta de 3 eixos = 6.</p>
+    </div>
+  );
+}
+
+/** Rendimento de referência da ANTT por eixos: ponto de partida para quem ainda não mediu o seu. */
+function AnttReference({ axles, onUse, loadedOnly }: { axles: string; onUse: (kmPerLiterCenti: number) => void; loadedOnly?: boolean }) {
+  const reference = anttKmPerLiterCenti(Number(axles));
+  return (
+    <div className="rounded-xl bg-[#f3f6f4] p-4 text-sm sm:col-span-2">
+      {reference === null ? (
+        <p>A ANTT não tem referência para {axles} eixos. Informe o consumo do seu caminhão.</p>
+      ) : (
+        <>
+          <p>
+            Referência da ANTT para {axles} eixos: <b>{formatKmPerLiter(reference)} km/L</b> (pesquisa de {ANTT_REFERENCE_YEAR}, média de muitos caminhões).
+            Isso não é o consumo do seu caminhão: use até você medir o seu.
+          </p>
+          <button type="button" onClick={() => onUse(reference)} className="mt-2 min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white">
+            Usar a referência da ANTT ({formatKmPerLiter(reference)} km/L)
+          </button>
+          {loadedOnly ? <p className="mt-2 text-xs text-[#718078]">Para o trecho vazio, meça o seu consumo: a ANTT não separa vazio e carregado.</p> : null}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -243,13 +284,18 @@ export function OfferView() {
           <Card title="A viagem">
             {quick ? (
               <>
+                <AxlesSelect value={form.axles} onChange={set("axles")} />
+                <div />
                 <NumField field="kmLoaded" label="Km carregado" value={form.kmLoaded} onChange={set("kmLoaded")} error={built.errors.kmLoaded} numeric />
                 <NumField field="kmEmptyTo" label="Km vazio (até a coleta e na volta)" value={form.kmEmptyTo} onChange={set("kmEmptyTo")} error={built.errors.kmEmptyTo} numeric hint="Some o que o caminhão roda sem carga. Se já tem carga de volta, só a ida até a coleta." />
                 <NumField field="kplAvg" label="Consumo médio (km/L)" value={form.kplAvg} onChange={set("kplAvg")} error={built.errors.kplAvg} hint="Média da viagem toda, com carga e vazio." />
                 <NumField field="diesel" label="Preço do diesel (R$/L)" value={form.diesel} onChange={set("diesel")} error={built.errors.diesel} />
+                <AnttReference axles={form.axles} onUse={(centi) => set("kplAvg")(formatKmPerLiter(centi))} />
               </>
             ) : (
               <>
+                <AxlesSelect value={form.axles} onChange={set("axles")} />
+                <div />
                 <NumField field="kmEmptyTo" label="Km até a coleta (vazio)" value={form.kmEmptyTo} onChange={set("kmEmptyTo")} error={built.errors.kmEmptyTo} numeric />
                 <NumField field="kmLoaded" label="Km carregado" value={form.kmLoaded} onChange={set("kmLoaded")} error={built.errors.kmLoaded} numeric />
                 <NumField field="kmEmptyBack" label="Km de volta (vazio)" value={form.kmEmptyBack} onChange={set("kmEmptyBack")} error={built.errors.kmEmptyBack} numeric hint="Deixe em branco se já tem carga de volta." />
@@ -257,6 +303,7 @@ export function OfferView() {
                 <NumField field="kplEmpty" label="Consumo vazio (km/L)" value={form.kplEmpty} onChange={set("kplEmpty")} error={built.errors.kplEmpty} />
                 <NumField field="kplLoaded" label="Consumo carregado (km/L)" value={form.kplLoaded} onChange={set("kplLoaded")} error={built.errors.kplLoaded} />
                 <NumField field="diesel" label="Preço do diesel (R$/L)" value={form.diesel} onChange={set("diesel")} error={built.errors.diesel} />
+                <AnttReference axles={form.axles} onUse={(centi) => set("kplLoaded")(formatKmPerLiter(centi))} loadedOnly />
               </>
             )}
           </Card>

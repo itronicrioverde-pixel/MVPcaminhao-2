@@ -79,6 +79,8 @@ export function parseBalanceDays(text: string): Parsed {
 export type OfferForm = {
   /** "quick": poucos números, consumo médio e custo por km que já inclui tudo. "detailed": todos os campos. */
   mode: "quick" | "detailed";
+  /** Eixos do conjunto (cavalo + implemento). Serve para a referência de consumo da ANTT; o cálculo não depende dele. */
+  axles: string;
   freightMode: "fixed" | "perTon";
   freight: string;
   rate: string;
@@ -119,6 +121,7 @@ export type OfferForm = {
 export function emptyOfferForm(): OfferForm {
   return {
     mode: "quick",
+    axles: "9",
     freightMode: "fixed", freight: "", rate: "", weightKg: "",
     kmEmptyTo: "", kmLoaded: "", kmEmptyBack: "", kplEmpty: "", kplLoaded: "", kplAvg: "", diesel: "",
     toll: "", noToll: false, tollPayer: "me", arlaUse: false, arlaPct: "", arlaPrice: "", vehicleKm: "", vehicleKmAll: "", fixedDay: "", extras: "",

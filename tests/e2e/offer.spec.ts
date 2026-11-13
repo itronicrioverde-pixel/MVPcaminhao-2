@@ -585,3 +585,44 @@ test("o adiantamento escolhido fica guardado neste aparelho", async ({ page }) =
   await openOffer(page, "quick");
   await expect(page.getByLabel("Adiantamento (%)", { exact: true })).toHaveValue("50");
 });
+
+// ---------- eixos do conjunto e referência da ANTT ----------
+
+test("eixos: o padrão é 9 e a referência da ANTT acompanha o número de eixos", async ({ page }) => {
+  await openOffer(page, "quick");
+  const axles = page.getByLabel("Eixos do conjunto", { exact: true });
+  await expect(axles).toHaveValue("9");
+  await expect(page.getByRole("button", { name: "Usar a referência da ANTT (1,70 km/L)", exact: true })).toBeVisible();
+  for (const [value, text] of [["6", "2,10"], ["7", "1,90"], ["3", "3,50"], ["2", "4,50"]] as const) {
+    await axles.selectOption(value);
+    await expect(page.getByRole("button", { name: `Usar a referência da ANTT (${text} km/L)`, exact: true })).toBeVisible();
+  }
+  // a ANTT não tem referência para 8 eixos: o app não inventa
+  await axles.selectOption("8");
+  await expect(page.getByRole("button", { name: /Usar a referência da ANTT/ })).toBeHidden();
+  await expect(page.getByText("A ANTT não tem referência para 8 eixos", { exact: false })).toBeVisible();
+});
+
+test("eixos: a referência preenche o consumo, com o aviso de que não é o consumo do caminhão", async ({ page }) => {
+  await openOffer(page, "quick");
+  await expect(page.getByText("pesquisa de 2019", { exact: false })).toBeVisible();
+  await expect(page.getByText("não é o consumo do seu caminhão", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Usar a referência da ANTT (1,70 km/L)", exact: true }).click();
+  await expect(page.getByLabel("Consumo médio (km/L)", { exact: true })).toHaveValue("1,70");
+});
+
+test("eixos, modo detalhado: a referência vai só para o carregado; o vazio fica para medir", async ({ page }) => {
+  await openOffer(page);
+  await page.getByRole("button", { name: "Usar a referência da ANTT (1,70 km/L)", exact: true }).click();
+  await expect(page.getByLabel("Consumo carregado (km/L)", { exact: true })).toHaveValue("1,70");
+  await expect(page.getByLabel("Consumo vazio (km/L)", { exact: true })).toHaveValue("");
+  await expect(page.getByText("Para o trecho vazio, meça o seu consumo", { exact: false })).toBeVisible();
+});
+
+test("o número de eixos escolhido fica guardado neste aparelho", async ({ page }) => {
+  await openOffer(page, "quick");
+  await page.getByLabel("Eixos do conjunto", { exact: true }).selectOption("7");
+  await page.reload();
+  await openOffer(page, "quick");
+  await expect(page.getByLabel("Eixos do conjunto", { exact: true })).toHaveValue("7");
+});
