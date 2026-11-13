@@ -171,7 +171,14 @@ try{
   assert.equal(fixed.resultCents,491360-75000);assert.equal(fixed.resultPerDayCents,277573);
   assert.equal(o.analyzeOffer(base({fixedCostPerDayCents:33333,durationHours:36})).fixedCostCents,50000,'49.999,5 arredonda para cima');
   assert.equal(full.fixedCostCents,0,'custo fixo zero informado é zero conhecido');
-  assert.deepEqual(codes(o.analyzeOffer(base({fixedCostPerDayCents:null}))),['CUSTO_FIXO_DIA_NAO_INFORMADO']);
+  // custo fixo ainda não informado (o dono só vai saber depois de alimentar o app): aviso, não trava a análise
+  const noFixed=o.analyzeOffer(base({fixedCostPerDayCents:null}));
+  assert.deepEqual(codes(noFixed),[],'sem o custo fixo a análise não fica provisória');
+  assert.equal(noFixed.complete,true);assert.equal(noFixed.fixedCostCents,null,'e ele não entra na conta como zero escondido');
+  assert.ok(noFixed.notices.some(n=>n.code==='CUSTO_FIXO_NAO_INFORMADO'),'mas o aviso aparece');
+  assert.ok(!o.analyzeOffer(base({fixedCostPerDayCents:0})).notices.some(n=>n.code==='CUSTO_FIXO_NAO_INFORMADO'),'zero informado não precisa de aviso');
+  assert.ok(!o.analyzeOffer(base({fixedCostPerDayCents:50000,durationHours:36})).notices.some(n=>n.code==='CUSTO_FIXO_NAO_INFORMADO'));
+  assert.equal(noFixed.resultCents,full.resultCents,'sem custo fixo o resultado é o mesmo de custo fixo zero');
   assert.deepEqual(codes(o.analyzeOffer(base({fixedCostPerDayCents:50000,durationHours:null}))),['DURACAO_AUSENTE']);
   assert.equal(o.analyzeOffer(base({fixedCostPerDayCents:50000,durationHours:null})).fixedCostCents,null);
   assert.deepEqual(codes(o.analyzeOffer(base({fixedCostPerDayCents:0,durationHours:null}))),[],'sem custo fixo não precisa de duração');

@@ -50,7 +50,7 @@ test("frete por tonelada do documento compensa, com todos os números", async ({
   await openOffer(page);
   await page.getByRole("button", { name: "Por tonelada", exact: true }).click();
   await fill(page, "Valor por tonelada (R$)", "200");
-  await fill(page, "Peso faturável (kg)", "50.300");
+  await fill(page, "Peso carregado (kg)", "50.300");
   await fillTrip(page);
 
   const card = result(page);
@@ -230,15 +230,18 @@ async function readyOffer(page: Page, freight = "10.060") {
   await fill(page, "Valor do frete (R$)", freight);
 }
 
-test("sem custo fixo informado o resultado fica provisório; zero conta como informado", async ({ page }) => {
+test("custo fixo por dia em branco só avisa: o dono ainda não sabe e a análise não trava", async ({ page }) => {
   await openOffer(page);
   await fillTrip(page);
   await fill(page, "Custo fixo por dia (R$/dia)", "");
   await fill(page, "Valor do frete (R$)", "10.060");
-  await expect(result(page)).toContainText("O custo fixo por dia");
-  await expect(result(page)).toContainText("Resultado provisório");
+  const card = result(page);
+  await expect(card).toContainText("Custo fixo por dia não informado");
+  await expect(card).toContainText("ainda não entrou na conta");
+  await expect(card).not.toContainText("Resultado provisório");
+  await expect(card).toContainText("Compensa");
   await fill(page, "Custo fixo por dia (R$/dia)", "0");
-  await expect(result(page)).not.toContainText("Resultado provisório");
+  await expect(card).not.toContainText("Custo fixo por dia não informado");
 });
 
 test("custo fixo por dia entra pelos dias da viagem e mostra o resultado por dia", async ({ page }) => {
@@ -312,8 +315,12 @@ test("folga do diesel mostra até quanto ele pode subir", async ({ page }) => {
 
 test("adiantamento e prazo mostram o dinheiro seu necessário e o custo de esperar", async ({ page }) => {
   await readyOffer(page);
-  await expect(result(page)).toContainText("R$ 2.758,60");
+  await expect(result(page)).toContainText("O adiantamento cobre as despesas da estrada");
   await page.getByText("Mais opções", { exact: true }).click();
+  await expect(page.getByLabel("Adiantamento (%)", { exact: true })).toHaveValue("80");
+  await expect(page.getByLabel("Prazo para receber o saldo (dias)", { exact: true })).toHaveValue("0");
+  await fill(page, "Adiantamento (%)", "0");
+  await expect(result(page)).toContainText("R$ 2.758,60");
   await fill(page, "Adiantamento (%)", "20");
   await fill(page, "Prazo para receber o saldo (dias)", "30");
   await fill(page, "Custo do seu dinheiro (% ao mês)", "3");
@@ -329,6 +336,7 @@ test("adiantamento e prazo mostram o dinheiro seu necessário e o custo de esper
 test("compensa, mas o prazo de pagamento tira a margem da meta", async ({ page }) => {
   await readyOffer(page, "6.000");
   await page.getByText("Mais opções", { exact: true }).click();
+  await fill(page, "Adiantamento (%)", "0");
   await fill(page, "Prazo para receber o saldo (dias)", "60");
   await fill(page, "Custo do seu dinheiro (% ao mês)", "3");
   const card = result(page);
@@ -489,7 +497,10 @@ test("o app explica o que é o frete, em palavras simples", async ({ page }) => 
   await expect(help).toContainText("o valor que o contratante paga");
   await expect(help).toContainText("por tonelada");
   await expect(help).toContainText("valor fechado");
+  await expect(help).toContainText("peso carregado");
   await expect(help).toContainText("peso que vale para cobrar");
+  await expect(help).toContainText("80%");
+  await expect(help).toContainText("20% na descarga");
   await expect(help).toContainText("O frete tem que pagar");
   await expect(help).toContainText("Se a volta é vazia");
   await expect(help).toContainText("vale-pedágio");
@@ -535,4 +546,42 @@ test("a volta vazia pesa no resultado e o app mostra isso", async ({ page }) => 
   await fill(page, "Km vazio (até a coleta e na volta)", "720");
   await expect(result(page)).toContainText("R$ 1.434,46");
   await expect(result(page)).toContainText("Abaixo da sua meta");
+});
+
+
+// ---------- pagamento: 80% logo no início e 20% na descarga ----------
+
+test("modo rápido: 80% do frete cai no início e o adiantamento cobre as despesas da estrada", async ({ page }) => {
+  await openOffer(page, "quick");
+  await expect(page.getByLabel("Adiantamento (%)", { exact: true })).toHaveValue("80");
+  await fillQuick(page, "10.060");
+  const card = result(page);
+  await expect(card).toContainText("R$ 8.048,00");
+  await expect(card).toContainText("R$ 2.012,00");
+  await expect(card).toContainText("na descarga");
+  await expect(card).toContainText("O adiantamento cobre as despesas da estrada");
+  // o pagamento não muda o lucro, só o dinheiro que sai do bolso
+  await expect(card).toContainText("R$ 4.556,16");
+});
+
+test("modo rápido: sem adiantamento o dono banca diesel e pedágio", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "10.060");
+  await fill(page, "Adiantamento (%)", "0");
+  const card = result(page);
+  await expect(card).toContainText("R$ 2.756,04");
+  await expect(card).not.toContainText("O adiantamento cobre as despesas da estrada");
+  await fill(page, "Adiantamento (%)", "20");
+  await expect(card).toContainText("R$ 744,04");
+  await expect(card).toContainText("R$ 2.012,00");
+  await expect(card).toContainText("R$ 8.048,00");
+  await expect(card).toContainText("R$ 4.556,16");
+});
+
+test("o adiantamento escolhido fica guardado neste aparelho", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fill(page, "Adiantamento (%)", "50");
+  await page.reload();
+  await openOffer(page, "quick");
+  await expect(page.getByLabel("Adiantamento (%)", { exact: true })).toHaveValue("50");
 });

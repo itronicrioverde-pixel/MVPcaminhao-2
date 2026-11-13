@@ -123,7 +123,7 @@ export function emptyOfferForm(): OfferForm {
     kmEmptyTo: "", kmLoaded: "", kmEmptyBack: "", kplEmpty: "", kplLoaded: "", kplAvg: "", diesel: "",
     toll: "", noToll: false, tollPayer: "me", arlaUse: false, arlaPct: "", arlaPrice: "", vehicleKm: "", vehicleKmAll: "", fixedDay: "", extras: "",
     commission: "", margin: "", commissionBase: "gross", discounts: "", otherPct: "", days: "",
-    ccd: "", cc: "", advance: "", balanceDays: "", moneyCost: "", safety: "",
+    ccd: "", cc: "", advance: "80", balanceDays: "0", moneyCost: "", safety: "",
   };
 }
 
@@ -175,8 +175,9 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
     if (ccd !== null && cc === null && !errors.cc) errors.cc = "Informe o CC junto com o CCD.";
     if (cc !== null && ccd === null && !errors.ccd) errors.ccd = "Informe o CCD junto com o CC.";
   }
-  const advance = detailed ? read("advance", parsePercent) : null;
-  const balanceDays = detailed ? read("balanceDays", parseBalanceDays) : null;
+  // 80% do frete cai logo no início e 20% na descarga. O adiantamento vale nos dois modos; o prazo do saldo só no detalhado.
+  const advance = read("advance", parsePercent);
+  const balanceDays = detailed ? read("balanceDays", parseBalanceDays) : 0;
   const moneyCost = detailed ? read("moneyCost", parsePercent) : null;
   const safety = detailed ? read("safety", parsePercent) : null;
 

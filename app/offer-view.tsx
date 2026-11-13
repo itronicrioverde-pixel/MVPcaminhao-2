@@ -9,7 +9,7 @@ import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, par
 // Só o que é do caminhão e do jeito de trabalhar fica guardado neste aparelho.
 // O que é da oferta (frete, quilômetros, pedágio, duração) começa vazio a cada análise.
 const STORAGE_KEY = "rota-financeira:analise-de-frete:v1";
-const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "kplAvg", "diesel", "vehicleKm", "vehicleKmAll", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost"] as const;
+const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "kplAvg", "diesel", "vehicleKm", "vehicleKmAll", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost", "advance", "balanceDays"] as const;
 
 const ANTT_CALCULATOR = "https://calculadorafrete.antt.gov.br/";
 
@@ -225,18 +225,18 @@ export function OfferView() {
               ) : (
                 <>
                   <NumField field="rate" label="Valor por tonelada (R$)" value={form.rate} onChange={set("rate")} error={built.errors.rate} />
-                  <NumField field="weightKg" label="Peso faturável (kg)" value={form.weightKg} onChange={set("weightKg")} error={built.errors.weightKg} numeric hint="Em quilos, como está no contrato. 50 toneladas = 50.000." />
+                  <NumField field="weightKg" label="Peso carregado (kg)" value={form.weightKg} onChange={set("weightKg")} error={built.errors.weightKg} numeric hint="Em quilos, o peso que foi carregado. 50 toneladas = 50.000." />
                 </>
               )}
             </div>
             <HelpNote title="Entenda o frete" className="mt-4">
               <p><b>O que é:</b> o valor que o contratante paga para você levar a carga da origem até o destino.</p>
               <p><b>Como é combinado:</b> por tonelada (tarifa × peso) ou por valor fechado da viagem.</p>
-              <p><b>Peso faturável:</b> o peso que vale para cobrar. Pode ser o da origem, o do destino ou o menor, conforme o contrato. Se o do destino for menor, o frete diminui.</p>
+              <p><b>Peso:</b> o frete é calculado pelo peso carregado. É o peso que vale para cobrar.</p>
               <p><b>O frete tem que pagar:</b> o diesel, o pedágio (se for seu), o custo do caminhão, a comissão e ainda deixar a sua margem.</p>
               <p><b>Se a volta é vazia,</b> o frete da ida também paga a volta. Por isso a tela pede os km vazios.</p>
               <p><b>Fora do frete:</b> o vale-pedágio, em regra, vem do contratante à parte. Descontos e taxas do contratante saem do frete antes de você receber.</p>
-              <p><b>Quanto cai na conta:</b> o frete menos os descontos. Parte pode vir adiantada e o resto depois.</p>
+              <p><b>Quanto cai na conta:</b> o frete menos os descontos. No seu caso, 80% cai logo no início e 20% na descarga.</p>
             </HelpNote>
           </section>
 
@@ -310,11 +310,12 @@ export function OfferView() {
             ) : (
               <>
               <NumField field="vehicleKm" label="Custo por km do caminhão (R$/km)" value={form.vehicleKm} onChange={set("vehicleKm")} error={built.errors.vehicleKm} hint="Pneus, manutenção e desgaste por km rodado." />
-              <NumField field="fixedDay" label="Custo fixo por dia (R$/dia)" value={form.fixedDay} onChange={set("fixedDay")} error={built.errors.fixedDay} hint="Parcela, seguro, IPVA, depreciação, rastreador, salário. Digite 0 se não tem." />
+              <NumField field="fixedDay" label="Custo fixo por dia (R$/dia)" value={form.fixedDay} onChange={set("fixedDay")} error={built.errors.fixedDay} hint="Parcela, seguro, IPVA, depreciação, rastreador, salário. Deixe em branco se ainda não sabe: o app só avisa que ele não entrou na conta." />
               <HelpNote title="O que é o custo fixo?" className="sm:col-span-2">
                 <p>É o gasto do caminhão que existe mesmo com o caminhão parado: você paga rodando ou não.</p>
                 <p><b>Entra:</b> parcela, seguro, IPVA e licenciamento, rastreador, salário fixo do motorista e depreciação (o quanto o caminhão perde de valor com o tempo).</p>
                 <p><b>Não entra:</b> diesel e pedágio, pneus e manutenção (isso é o custo por km) nem a comissão.</p>
+                <p><b>Ainda não sabe?</b> Deixe em branco: o app avisa que o custo fixo não entrou na conta e não trava a análise. Com o uso, o dono passa a ter esse número. No modo rápido, o custo por km já inclui o fixo.</p>
                 <p><b>Como achar o valor por dia:</b> some o que paga por mês e divida pelos dias do mês em que o caminhão trabalha, por exemplo 25. Dividir por 30 deixa o custo por dia menor que o real.</p>
               </HelpNote>
               <NumField field="extras" label="Outros custos (R$)" value={form.extras} onChange={set("extras")} error={built.errors.extras} hint="Alimentação, chapa, estacionamento…" />
@@ -330,6 +331,12 @@ export function OfferView() {
               </>
             )}
           </Card>
+
+          {quick ? (
+            <Card title="Como você recebe">
+              <NumField field="advance" label="Adiantamento (%)" value={form.advance} onChange={set("advance")} error={built.errors.advance} hint="Parte do frete que cai logo no início. O resto cai na descarga. Hoje: 80% e 20%." />
+            </Card>
+          ) : null}
 
           <Card title="Comissão e meta">
             <NumField field="commission" label="Comissão do motorista (%)" value={form.commission} onChange={set("commission")} error={built.errors.commission} hint="Em branco se você não paga comissão." />
@@ -358,7 +365,7 @@ export function OfferView() {
                 <p className="text-sm font-bold">Pagamento</p>
                 <p className="text-xs text-[#718078]">Quanto você recebe adiantado e quando chega o saldo.</p>
               </div>
-              <NumField field="advance" label="Adiantamento (%)" value={form.advance} onChange={set("advance")} error={built.errors.advance} hint="Parte do frete paga antes da viagem. Em branco se não tem." />
+              <NumField field="advance" label="Adiantamento (%)" value={form.advance} onChange={set("advance")} error={built.errors.advance} hint="Parte do frete que cai logo no início. Hoje: 80%. O resto cai no prazo abaixo." />
               <NumField field="balanceDays" label="Prazo para receber o saldo (dias)" value={form.balanceDays} onChange={set("balanceDays")} error={built.errors.balanceDays} numeric hint="0 se recebe na descarga." />
               <NumField field="moneyCost" label="Custo do seu dinheiro (% ao mês)" value={form.moneyCost} onChange={set("moneyCost")} error={built.errors.moneyCost} hint="O que custa ficar sem esse dinheiro (juros do financiamento, por exemplo). Em branco para não contar." />
 
@@ -484,12 +491,14 @@ export function OfferView() {
                   </div>
                 ) : null}
 
-                {!quick ? (
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 text-sm shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Dinheiro e prazo</h3>
                   <Row label="Dinheiro seu necessário até receber" detail="Diesel, ARLA, pedágio e outros custos da estrada, menos o adiantamento" value={formatBRL(result.cashNeededCents)} />
-                  {result.advanceCents > 0 ? <Row label="Adiantamento" value={formatBRL(result.advanceCents)} /> : null}
-                  {result.advanceCents > 0 || result.financingCostCents > 0 ? <Row label="Saldo a receber" detail={input.balanceDays !== null ? `em ${input.balanceDays} dias` : undefined} value={formatBRL(result.receivableCents)} /> : null}
+                  {result.advanceCents > 0 && result.cashNeededCents === 0 ? (
+                    <p className="text-sm font-semibold text-emerald-800">O adiantamento cobre as despesas da estrada: você não precisa tirar dinheiro do bolso.</p>
+                  ) : null}
+                  {result.advanceCents > 0 ? <Row label="Adiantamento" detail="logo no início" value={formatBRL(result.advanceCents)} /> : null}
+                  {result.advanceCents > 0 || result.financingCostCents > 0 ? <Row label="Saldo a receber" detail={input.balanceDays === null ? undefined : input.balanceDays === 0 ? "na descarga" : `em ${input.balanceDays} dias`} value={formatBRL(result.receivableCents)} /> : null}
                   {result.financingCostCents > 0 ? (
                     <>
                       <Row label="Custo de esperar o saldo" value={`− ${formatBRL(result.financingCostCents)}`} />
@@ -497,7 +506,6 @@ export function OfferView() {
                     </>
                   ) : null}
                 </div>
-                ) : null}
 
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 text-sm shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Como chegamos nesse resultado</h3>

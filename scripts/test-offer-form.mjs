@@ -87,7 +87,7 @@ try{
 
   // variáveis novas: neutras quando ficam em branco, exceto as que precisam ser sabidas
   assert.equal(built.input.tollPayer,'me');assert.equal(built.input.arla,null);assert.equal(built.input.floor,null);
-  assert.equal(built.input.fixedCostPerDayCents,0);assert.equal(built.input.advanceBp,0);assert.equal(built.input.balanceDays,null);assert.equal(built.input.moneyCostMonthlyBp,0);
+  assert.equal(built.input.fixedCostPerDayCents,0);assert.equal(built.input.advanceBp,8000,'80% logo no início é o padrão da operação');assert.equal(built.input.balanceDays,0,'e o resto cai na descarga');assert.equal(built.input.moneyCostMonthlyBp,0);
   assert.equal(f.buildOfferInput({...form,fixedDay:''}).input.fixedCostPerDayCents,null,'custo fixo em branco é desconhecido, não zero');
   assert.equal(f.buildOfferInput({...form,fixedDay:'500',days:'2'}).input.fixedCostPerDayCents,50000);
   assert.equal(f.buildOfferInput({...form,fixedDay:'500',days:'2'}).input.durationHours,48);
@@ -129,13 +129,28 @@ try{
   assert.deepEqual(q.errors,{});assert.equal(q.marginMissing,false);
   assert.deepEqual(q.input.legs,[{kind:'empty',km:120,kmPerLiterCenti:212},{kind:'loaded',km:600,kmPerLiterCenti:212},{kind:'empty',km:0,kmPerLiterCenti:212}],'o mesmo consumo médio nos dois');
   assert.equal(q.input.vehicleCostCentsPerKm,200);assert.equal(q.input.fixedCostPerDayCents,0,'o custo por km do modo rápido já inclui o fixo');
-  assert.equal(q.input.arla,null);assert.equal(q.input.floor,null);assert.equal(q.input.durationHours,null);assert.equal(q.input.advanceBp,0);assert.equal(q.input.balanceDays,null);
+  assert.equal(q.input.arla,null);assert.equal(q.input.floor,null);assert.equal(q.input.durationHours,null);assert.equal(q.input.advanceBp,8000,'o rápido também recebe 80% adiantado');assert.equal(q.input.balanceDays,0,'e 20% na descarga');
   assert.equal(q.input.commissionBase,'gross');assert.equal(q.input.extraCostsCents,0);assert.equal(q.input.safetyBp,1000);assert.equal(q.input.tollPayer,'me');
   const qr=offer.analyzeOffer(q.input);
   assert.equal(qr.complete,true,'com os números do modo rápido a análise fica completa');assert.deepEqual(qr.pending,[]);assert.equal(qr.decision,'compensa');
   // o que está escondido no modo rápido não conta, nem gera erro
-  const hidden=f.buildOfferInput({...quick,kplLoaded:'abc',kplEmpty:'x',arlaUse:true,arlaPct:'9',fixedDay:'500',days:'3',kmEmptyBack:'90',extras:'1000',vehicleKm:'9',ccd:'5',advance:'50',discounts:'999',commissionBase:'net'});
+  const hidden=f.buildOfferInput({...quick,kplLoaded:'abc',kplEmpty:'x',arlaUse:true,arlaPct:'9',fixedDay:'500',days:'3',kmEmptyBack:'90',extras:'1000',vehicleKm:'9',ccd:'5',balanceDays:'45',moneyCost:'9',discounts:'999',commissionBase:'net'});
   assert.deepEqual(hidden.errors,{});assert.deepEqual(hidden.input,q.input,'campos do modo detalhado não mexem no modo rápido');
+  // pagamento: 80% logo no início e 20% na descarga; o rápido deixa mudar só o adiantamento
+  assert.equal(f.emptyOfferForm().advance,'80');assert.equal(f.emptyOfferForm().balanceDays,'0');
+  assert.equal(f.buildOfferInput({...quick,advance:'50'}).input.advanceBp,5000);
+  assert.equal(f.buildOfferInput({...quick,advance:''}).input.advanceBp,0,'adiantamento em branco = sem adiantamento');
+  assert.deepEqual(Object.keys(f.buildOfferInput({...quick,advance:'abc'}).errors),['advance']);
+  assert.deepEqual(Object.keys(f.buildOfferInput({...quick,advance:'120'}).errors),['advance']);
+  const qCash=offer.analyzeOffer(q.input);
+  assert.equal(qCash.advanceCents,804800,'80% de R$ 10.060,00 cai na saída');
+  assert.equal(qCash.receivableCents,201200,'20% na descarga');
+  assert.equal(qCash.cashNeededCents,0,'o adiantamento cobre diesel e pedágio da estrada');
+  assert.equal(offer.analyzeOffer(f.buildOfferInput({...quick,advance:'0'}).input).cashNeededCents,230604+45000,'sem adiantamento o dono banca diesel e pedágio');
+  // custo fixo por dia em branco: o dono ainda não sabe, vira aviso e não trava
+  const noFixedForm=offer.analyzeOffer(f.buildOfferInput({...form,fixedDay:''}).input);
+  assert.equal(noFixedForm.complete,true);assert.ok(noFixedForm.notices.some(n=>n.code==='CUSTO_FIXO_NAO_INFORMADO'));
+
   // faltou dado no modo rápido: pendência, não zero
   const qNoKpl=offer.analyzeOffer(f.buildOfferInput({...quick,kplAvg:''}).input);
   assert.ok(qNoKpl.pending.some(p=>p.code==='CONSUMO_AUSENTE'));

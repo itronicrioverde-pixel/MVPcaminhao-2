@@ -142,10 +142,22 @@ Esforço é **minha estimativa de ordem de grandeza** (P = dias, M = 1 a 2 seman
 
 A ordem é a que mais reduz erro por unidade de trabalho e a que menos mexe em dados reais no começo.
 
-## 7. O que ainda precisa ser decidido por você
+## 7. Respostas já recebidas do dono
 
-1. **Margem que o dono considera boa.** A tela não vem com número pronto.
-2. **Folga de segurança.** Usei 10% como padrão. É uma suposição minha. Você pode mudar, e com o histórico dá para calibrar.
-3. **Como publicar.** O código está na branch `claude/eager-heisenberg-4r4fsn`. Para ir ao ar, precisa entrar na `main` e ser publicado pelo seu fluxo. Eu não consigo publicar daqui.
-4. **Login:** e-mail e senha, conta Google, ou manter o "Entrar com ChatGPT"? Só importa quando entrar o motorista.
-5. **As perguntas da seção 7 do documento anterior** (base da comissão, vale-pedágio, ARLA, peso faturável, custo fixo por dia).
+| Pergunta | Resposta | O que mudou no app |
+|---|---|---|
+| Em que peso o frete é calculado? | **Peso carregado** | O campo é "Peso carregado (kg)". Sumiu o texto que dizia que podia ser o de destino |
+| Como o frete é pago? | **80% logo no início e 20% na descarga** | Nos dois modos o adiantamento começa em 80% e o saldo cai na descarga. A tela mostra o adiantamento, o saldo e se o adiantamento cobre as despesas da estrada. Isso não muda o lucro, muda o dinheiro que o dono precisa ter no bolso |
+| Quem define a margem? | **O dono** | O campo começa vazio, sem número pronto |
+| Custo fixo por dia | **Só depois de o dono usar o app e alimentá-lo** | Em branco não trava mais a análise: aparece um aviso de que ele não entrou na conta. No modo rápido o "custo por km, tudo incluso" já cobre o fixo |
+
+Suposição ainda a confirmar: os 80% são sobre o **frete bruto**, antes de descontos.
+
+**Plano para o custo fixo por dia.** Quando o dono tiver lançado as despesas fixas (parcela, seguro, IPVA, rastreador) e as viagens com a duração real, o app calcula o custo fixo por dia sozinho e passa a sugerir o valor. Até lá, vale o aviso e o modo rápido.
+
+## 8. O que ainda precisa ser decidido
+
+1. **Folga de segurança.** Hoje é 10% no modo rápido e pode ser mudada ou zerada no detalhado. Foi decidido manter por enquanto. Se o dono quiser outro percentual, ou não quiser esse aviso, é um ajuste pequeno.
+2. **Como publicar.** O código está na branch `claude/eager-heisenberg-4r4fsn`. Para ir ao ar, precisa entrar na `main` e ser publicado pelo fluxo do dono.
+3. **Login:** e-mail e senha, conta Google, ou manter o "Entrar com ChatGPT"? Só importa quando entrar o motorista.
+4. **Perguntas que ainda faltam:** o contratante costuma dar vale-pedágio? A comissão é sobre o frete bruto? O caminhão usa ARLA 32?

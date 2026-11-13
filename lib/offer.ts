@@ -36,7 +36,7 @@ export type OfferInput = {
   extraCostsCents: number;
   /** Pneus, manutenção e similares por km rodado (vazio e carregado). null = não informado. */
   vehicleCostCentsPerKm: number | null;
-  /** Parcela, seguro, IPVA, depreciação, rastreador, salário. null = não informado; 0 = não tem. */
+  /** Parcela, seguro, IPVA, depreciação, rastreador, salário. null = ainda não informado (só avisa); 0 = não tem. */
   fixedCostPerDayCents: number | null;
   /** Descontos ou retenções definitivas e documentadas, que reduzem o que se recebe. */
   deductionsCents: number;
@@ -65,12 +65,11 @@ export type PendingCode =
   | "PEDAGIO_NAO_CONFERIDO"
   | "ARLA_INCOMPLETO"
   | "CUSTO_KM_VEICULO_NAO_INFORMADO"
-  | "CUSTO_FIXO_DIA_NAO_INFORMADO"
   | "DURACAO_AUSENTE"
   | "PRAZO_AUSENTE"
   | "CONFIG_INCOMPATIVEL";
 
-export type NoticeCode = "PISO_NAO_CALCULADO" | "ABAIXO_DO_PISO" | "VALE_PEDAGIO_CONFERIR" | "COMPENSA_SO_SEM_PRAZO";
+export type NoticeCode = "PISO_NAO_CALCULADO" | "ABAIXO_DO_PISO" | "VALE_PEDAGIO_CONFERIR" | "COMPENSA_SO_SEM_PRAZO" | "CUSTO_FIXO_NAO_INFORMADO";
 
 export type Pending = { code: PendingCode; message: string };
 /** Avisos que não travam a análise completa. */
@@ -143,7 +142,6 @@ const PENDING_MESSAGES: Record<PendingCode, string> = {
   PEDAGIO_NAO_CONFERIDO: "O pedágio ainda não foi conferido. Isso é diferente de não ter pedágio.",
   ARLA_INCOMPLETO: "Falta o consumo ou o preço do ARLA 32. Ele não entrou na conta.",
   CUSTO_KM_VEICULO_NAO_INFORMADO: "O custo por km do caminhão (pneus, manutenção) não foi informado.",
-  CUSTO_FIXO_DIA_NAO_INFORMADO: "O custo fixo por dia (parcela, seguro, IPVA, depreciação) não foi informado. Se não tem, digite 0.",
   DURACAO_AUSENTE: "Falta a duração da viagem em dias. Sem ela o custo fixo não entrou na conta.",
   PRAZO_AUSENTE: "Falta o prazo para receber o saldo. O custo de esperar o pagamento não entrou na conta.",
   CONFIG_INCOMPATIVEL: "Comissão, outros percentuais e margem alvo somam 100% ou mais. Não existe frete que cumpra a meta.",
@@ -154,6 +152,7 @@ const NOTICE_MESSAGES: Record<NoticeCode, string> = {
   ABAIXO_DO_PISO: "O frete está abaixo do piso mínimo da ANTT calculado com os coeficientes que você informou. Confira o enquadramento na calculadora oficial.",
   VALE_PEDAGIO_CONFERIR: "O pedágio é por conta do contratante (vale-pedágio). Confira se o valor cobre a rota inteira, inclusive a volta se for o caso.",
   COMPENSA_SO_SEM_PRAZO: "O frete cumpre a sua meta, mas depois do custo de esperar o saldo a margem fica abaixo dela.",
+  CUSTO_FIXO_NAO_INFORMADO: "Custo fixo por dia não informado: ele ainda não entrou na conta. Se o custo por km acima não inclui parcela, seguro e IPVA, o resultado está mais alto do que o real.",
 };
 
 function assertInt(name: string, value: unknown, min = 0, max = Number.MAX_SAFE_INTEGER): asserts value is number {
@@ -328,8 +327,7 @@ function evaluate(input: OfferInput): OfferResult {
   if (input.tollPayer === "me" && input.tollCents === null) add("PEDAGIO_NAO_CONFERIDO");
   if (arlaIncomplete) add("ARLA_INCOMPLETO");
   if (input.vehicleCostCentsPerKm === null) add("CUSTO_KM_VEICULO_NAO_INFORMADO");
-  if (input.fixedCostPerDayCents === null) add("CUSTO_FIXO_DIA_NAO_INFORMADO");
-  else if (input.fixedCostPerDayCents > 0 && !input.durationHours) add("DURACAO_AUSENTE");
+  if (input.fixedCostPerDayCents !== null && input.fixedCostPerDayCents > 0 && !input.durationHours) add("DURACAO_AUSENTE");
   if (input.moneyCostMonthlyBp > 0 && input.balanceDays === null) add("PRAZO_AUSENTE");
 
   const targetPriceCents = minimumPriceCents(params, input.targetMarginBp);
@@ -370,6 +368,8 @@ function evaluate(input: OfferInput): OfferResult {
   if (floorCents === null) notify("PISO_NAO_CALCULADO");
   else if (gross > 0 && gross < floorCents) notify("ABAIXO_DO_PISO");
   if (input.tollPayer === "contractor") notify("VALE_PEDAGIO_CONFERIR");
+  // o dono só vai saber o custo fixo por dia depois de usar o app: avisa, mas não trava a análise
+  if (input.fixedCostPerDayCents === null) notify("CUSTO_FIXO_NAO_INFORMADO");
   if (decision === "compensa" && financingCostCents > 0 && mul(resultAfterFinancingCents, 10000) < mul(input.targetMarginBp, gross)) {
     notify("COMPENSA_SO_SEM_PRAZO");
   }
