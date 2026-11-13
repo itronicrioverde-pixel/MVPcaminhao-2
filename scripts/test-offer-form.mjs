@@ -167,6 +167,18 @@ try{
   const quickEmpty=offer.analyzeOffer(f.buildOfferInput(f.emptyOfferForm()).input);
   assert.equal(quickEmpty.decision,'sem_frete');assert.equal(quickEmpty.complete,false);
 
+  // perfil fiscal: o dono é autônomo (pessoa física) e quem paga é uma empresa; dá para mudar para MEI ou empresa
+  const e0=f.emptyOfferForm();
+  assert.equal(e0.profile,'autonomo');assert.equal(e0.payer,'empresa');assert.equal(e0.countRetentions,false,'por padrão a retenção é só estimativa, não entra no resultado');
+  assert.deepEqual(built.input.retention,{profile:'autonomo',payer:'empresa',count:false});
+  assert.deepEqual(q.input.retention,{profile:'autonomo',payer:'empresa',count:false},'vale nos dois modos');
+  assert.deepEqual(f.buildOfferInput({...quick,profile:'mei',payer:'pessoa_fisica',countRetentions:true}).input.retention,{profile:'mei',payer:'pessoa_fisica',count:true});
+  assert.deepEqual(f.buildOfferInput({...form,profile:'empresa'}).input.retention,{profile:'empresa',payer:'empresa',count:false});
+  const qRet=offer.analyzeOffer(q.input);
+  assert.equal(qRet.retentionCents,27162,'R$ 271,62 sobre R$ 10.060,00');assert.equal(qRet.resultCents,455616,'sem contar, o resultado é o mesmo de antes');
+  const qCount=offer.analyzeOffer(f.buildOfferInput({...quick,countRetentions:true}).input);
+  assert.equal(qCount.resultCents,455616-27162);assert.equal(qCount.marginBp,4259);
+
   // erro em qualquer campo: nada é calculado e cada campo aponta o seu erro
   const wrong=f.buildOfferInput({...form,toll:'abc',diesel:'6,7999',commission:'150'});
   assert.equal(wrong.input,null);assert.deepEqual(Object.keys(wrong.errors).sort(),['commission','diesel','toll']);

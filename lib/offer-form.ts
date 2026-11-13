@@ -1,4 +1,4 @@
-import type { Leg, OfferInput } from "./offer";
+import type { FreightPayer, Leg, OfferInput, TaxProfile } from "./offer";
 
 // Leitura dos números como o motorista digita, em português: "6,79", "50.300", "R$ 10.060,00".
 // Campo vazio é "desconhecido" (value null), nunca zero. Formato ambíguo é recusado, não adivinhado.
@@ -83,6 +83,11 @@ export type OfferForm = {
   mode: "quick" | "detailed";
   /** Eixos do conjunto (cavalo + implemento). Serve para a referência de consumo da ANTT; o cálculo não depende dele. */
   axles: string;
+  /** Perfil de quem recebe o frete e quem paga: decidem se há retenção de INSS e SEST/SENAT. */
+  profile: TaxProfile;
+  payer: FreightPayer;
+  /** Conta a retenção estimada no resultado. Desligado, ela só aparece como estimativa. */
+  countRetentions: boolean;
   freightMode: "fixed" | "perTon";
   freight: string;
   rate: string;
@@ -124,6 +129,9 @@ export function emptyOfferForm(): OfferForm {
   return {
     mode: "quick",
     axles: "9",
+    profile: "autonomo",
+    payer: "empresa",
+    countRetentions: false,
     freightMode: "fixed", freight: "", rate: "", weightKg: "",
     kmEmptyTo: "", kmLoaded: "", kmEmptyBack: "", kplEmpty: "", kplLoaded: "", kplAvg: "", diesel: "",
     toll: "", noToll: false, tollPayer: "me", arlaUse: false, arlaPct: "", arlaPrice: "", vehicleKm: "", vehicleKmAll: "", fixedDay: "", extras: "",
@@ -222,6 +230,7 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
     balanceDays,
     moneyCostMonthlyBp: moneyCost ?? 0,
     safetyBp: quick ? DEFAULT_SAFETY_BP : (safety ?? DEFAULT_SAFETY_BP),
+    retention: { profile: form.profile, payer: form.payer, count: form.countRetentions },
   };
   return { input, errors, marginMissing: margin === null };
 }

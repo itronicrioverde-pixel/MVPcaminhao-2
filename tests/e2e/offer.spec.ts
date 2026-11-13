@@ -752,3 +752,85 @@ test("medir consumo: dá para remover um abastecimento e os registros ficam guar
   await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(6);
   await expect(measured(page)).toContainText("1,90 km/L");
 });
+
+// ---------- perfil fiscal e retenções estimadas ----------
+// Autônomo (pessoa física) contratado por empresa: INSS 11% e SEST/SENAT 2,5%, ambos sobre 20% do frete bruto (2,7%).
+
+test("retenções: por padrão aparecem como estimativa e não mudam o resultado", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "10.060");
+  const card = result(page);
+  await expect(card).toContainText("Retenções estimadas");
+  await expect(card).toContainText("R$ 271,62");
+  await expect(card).toContainText("R$ 221,32");
+  await expect(card).toContainText("R$ 50,30");
+  await expect(card).toContainText("Se a empresa reter INSS e SEST/SENAT");
+  await expect(card).toContainText("o resultado seria R$ 4.284,54");
+  await expect(card).toContainText("42,59%");
+  await expect(card).toContainText("R$ 4.556,16");
+  await expect(card).toContainText("45,29%");
+});
+
+test("retenções: contar no resultado muda o resultado, o frete mínimo e o aviso", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "10.060");
+  await page.getByLabel("Contar as retenções estimadas no resultado", { exact: true }).check();
+  const card = result(page);
+  await expect(card).toContainText("R$ 4.284,54");
+  await expect(card).toContainText("42,59%");
+  await expect(card).toContainText("R$ 4.977,51");
+  await expect(card).toContainText("R$ 6.525,72");
+  await expect(card).toContainText("Já está contado no resultado");
+  await expect(card).not.toContainText("Se a empresa reter INSS e SEST/SENAT");
+});
+
+test("retenções: contar pode mudar a decisão do frete", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "6.500");
+  await expect(result(page)).toContainText("Compensa");
+  await expect(result(page)).toContainText("22,45%");
+  await page.getByLabel("Contar as retenções estimadas no resultado", { exact: true }).check();
+  await expect(result(page)).toContainText("Abaixo da sua meta");
+  await expect(result(page)).toContainText("19,75%");
+  await page.getByLabel("Contar as retenções estimadas no resultado", { exact: true }).uncheck();
+  await expect(result(page)).toContainText("Compensa");
+});
+
+test("perfil: pessoa física paga, MEI e empresa não ganham estimativa inventada", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "10.060");
+  await page.getByLabel("Quem paga o frete", { exact: true }).selectOption("pessoa_fisica");
+  await expect(result(page)).toContainText("Frete pago por pessoa física: não há retenção");
+  await expect(result(page)).not.toContainText("Retenções estimadas");
+  await page.getByLabel("Quem paga o frete", { exact: true }).selectOption("empresa");
+  await page.getByLabel("Você é", { exact: true }).selectOption("mei");
+  await expect(result(page)).toContainText("MEI: não encontramos regra de retenção");
+  await expect(result(page)).not.toContainText("Retenções estimadas");
+  await page.getByLabel("Você é", { exact: true }).selectOption("empresa");
+  await expect(result(page)).toContainText("Empresa: as retenções dependem do regime");
+  await expect(result(page)).not.toContainText("R$ 271,62");
+  await expect(result(page)).toContainText("R$ 4.556,16");
+});
+
+test("perfil: vale também no modo detalhado e fica guardado neste aparelho", async ({ page }) => {
+  await openOffer(page);
+  await fillTrip(page);
+  await fill(page, "Valor do frete (R$)", "10.060");
+  await expect(page.getByLabel("Você é", { exact: true })).toHaveValue("autonomo");
+  await expect(result(page)).toContainText("Retenções estimadas");
+  await page.getByLabel("Você é", { exact: true }).selectOption("mei");
+  await page.getByLabel("Contar as retenções estimadas no resultado", { exact: true }).check();
+  await page.reload();
+  await openOffer(page);
+  await expect(page.getByLabel("Você é", { exact: true })).toHaveValue("mei");
+  await expect(page.getByLabel("Contar as retenções estimadas no resultado", { exact: true })).toBeChecked();
+});
+
+test("retenções contadas entram no passo a passo do resultado", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "10.060");
+  await page.getByLabel("Contar as retenções estimadas no resultado", { exact: true }).check();
+  const steps = page.locator("div", { hasText: "Como chegamos nesse resultado" }).last();
+  await expect(steps).toContainText("Retenções estimadas");
+  await expect(steps).toContainText("R$ 271,62");
+});

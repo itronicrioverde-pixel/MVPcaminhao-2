@@ -25,6 +25,13 @@ export type ArlaInput = { percentOfDieselBp: number | null; priceMilli: number |
 /** Coeficientes do piso mínimo de frete, copiados da calculadora oficial da ANTT pelo usuário. */
 export type FloorInput = { ccdE4: number; ccCents: number };
 
+/** Perfil fiscal de quem recebe o frete. */
+export type TaxProfile = "autonomo" | "mei" | "empresa";
+/** Quem paga o frete: uma empresa (transportadora, por exemplo) ou uma pessoa física. */
+export type FreightPayer = "empresa" | "pessoa_fisica";
+/** `count`: conta a retenção estimada no resultado. Desligado, ela só aparece como estimativa. */
+export type RetentionInput = { profile: TaxProfile; payer: FreightPayer; count: boolean };
+
 export type OfferInput = {
   freight: FreightInput;
   legs: Leg[];
@@ -56,6 +63,8 @@ export type OfferInput = {
   moneyCostMonthlyBp: number;
   /** Folga de segurança: quanto os custos conhecidos podem ficar maiores no pior caso. 0 = não calcular. */
   safetyBp: number;
+  /** null = não estimar retenções. */
+  retention: RetentionInput | null;
 };
 
 export type PendingCode =
@@ -69,7 +78,16 @@ export type PendingCode =
   | "PRAZO_AUSENTE"
   | "CONFIG_INCOMPATIVEL";
 
-export type NoticeCode = "PISO_NAO_CALCULADO" | "ABAIXO_DO_PISO" | "VALE_PEDAGIO_CONFERIR" | "COMPENSA_SO_SEM_PRAZO" | "CUSTO_FIXO_NAO_INFORMADO";
+export type NoticeCode =
+  | "PISO_NAO_CALCULADO"
+  | "ABAIXO_DO_PISO"
+  | "VALE_PEDAGIO_CONFERIR"
+  | "COMPENSA_SO_SEM_PRAZO"
+  | "CUSTO_FIXO_NAO_INFORMADO"
+  | "RETENCAO_NAO_CONTADA"
+  | "RETENCAO_PF"
+  | "RETENCAO_MEI"
+  | "RETENCAO_EMPRESA";
 
 export type Pending = { code: PendingCode; message: string };
 /** Avisos que não travam a análise completa. */
@@ -129,11 +147,25 @@ export type OfferResult = {
   stressResultCents: number;
   stressMarginBp: number | null;
   robustness: Robustness | null;
+  /** Retenção de INSS e SEST/SENAT estimada (autônomo contratado por empresa). Zero nos outros perfis. */
+  retentionApplies: boolean;
+  retentionCents: number;
+  retentionInssCents: number;
+  retentionSestSenatCents: number;
+  retentionCounted: boolean;
+  /** Resultado já com a retenção descontada (igual ao resultado quando ela já foi contada). */
+  resultWithRetentionsCents: number;
+  marginWithRetentionsBp: number | null;
   decision: Decision;
   complete: boolean;
   pending: Pending[];
   notices: Notice[];
 };
+
+// Retenção sobre o frete do autônomo contratado por empresa: 11% (INSS) e 2,5% (SEST/SENAT), ambos sobre 20% do frete bruto.
+// Em pontos-base do frete bruto: 11% x 20% = 2,20% e 2,5% x 20% = 0,50%.
+const RETENTION_INSS_BP = 220;
+const RETENTION_SEST_SENAT_BP = 50;
 
 const PENDING_MESSAGES: Record<PendingCode, string> = {
   DISTANCIA_AUSENTE: "Informe a distância da viagem.",
@@ -152,6 +184,10 @@ const NOTICE_MESSAGES: Record<NoticeCode, string> = {
   ABAIXO_DO_PISO: "O frete está abaixo do piso mínimo da ANTT calculado com os coeficientes que você informou. Confira o enquadramento na calculadora oficial.",
   VALE_PEDAGIO_CONFERIR: "O pedágio é por conta do contratante (vale-pedágio). Confira se o valor cobre a rota inteira, inclusive a volta se for o caso.",
   COMPENSA_SO_SEM_PRAZO: "O frete cumpre a sua meta, mas depois do custo de esperar o saldo a margem fica abaixo dela.",
+  RETENCAO_NAO_CONTADA: "Se a empresa reter INSS e SEST/SENAT do frete, você recebe menos do que o frete combinado. Isso ainda não está no resultado.",
+  RETENCAO_PF: "Frete pago por pessoa física: não há retenção. Você mesmo recolhe o SEST/SENAT e o seu INSS.",
+  RETENCAO_MEI: "MEI: não encontramos regra de retenção pelo contratante. Confira o recibo.",
+  RETENCAO_EMPRESA: "Empresa: as retenções dependem do regime (Simples, lucro presumido ou real). Confira o recibo ou fale com o contador.",
   CUSTO_FIXO_NAO_INFORMADO: "Custo fixo por dia não informado: ele ainda não entrou na conta. Se o custo por km acima não inclui parcela, seguro e IPVA, o resultado está mais alto do que o real.",
 };
 
@@ -271,6 +307,12 @@ function validate(input: OfferInput) {
   if (input.balanceDays !== null) assertInt("prazo do saldo", input.balanceDays, 0, 3650);
   assertInt("custo do dinheiro", input.moneyCostMonthlyBp, 0, 10000);
   assertInt("folga de segurança", input.safetyBp, 0, 10000);
+  if (input.retention) {
+    const { profile, payer, count } = input.retention;
+    if (profile !== "autonomo" && profile !== "mei" && profile !== "empresa") throw new RangeError("perfil fiscal inválido");
+    if (payer !== "empresa" && payer !== "pessoa_fisica") throw new RangeError("quem paga o frete inválido");
+    if (typeof count !== "boolean") throw new RangeError("contar retenção inválido");
+  }
 }
 
 function evaluate(input: OfferInput): OfferResult {
@@ -310,14 +352,25 @@ function evaluate(input: OfferInput): OfferResult {
   const knownFuelCents = legs.reduce((sum, leg) => sum + (leg.costCents ?? 0), 0);
   const knownCostsCents = knownFuelCents + (arlaCostCents ?? 0) + tollCostCents + input.extraCostsCents + (vehicleCostCents ?? 0) + (fixedCostCents ?? 0);
 
+  // retenção estimada: proporcional ao frete, então entra na conta como um percentual sobre o frete
+  const retentionApplies = input.retention?.profile === "autonomo" && input.retention.payer === "empresa";
+  const retentionCounted = retentionApplies && input.retention?.count === true;
+  const retentionBp = retentionApplies ? RETENTION_INSS_BP + RETENTION_SEST_SENAT_BP : 0;
+  const retentionCents = roundDiv(mul(gross, retentionBp), 10000);
+  const retentionInssCents = retentionApplies ? roundDiv(mul(gross, RETENTION_INSS_BP), 10000) : 0;
+  const retentionSestSenatCents = retentionCents - retentionInssCents;
+
   const params: PriceParams = {
     fixedCostsCents: knownCostsCents,
     deductionsCents: input.deductionsCents,
     commissionBp: input.commissionBp,
     commissionBase: input.commissionBase,
-    otherPercentBp: input.otherPercentBp,
+    otherPercentBp: input.otherPercentBp + (retentionCounted ? retentionBp : 0),
   };
-  const { commission, other, result } = resultAt(gross, params);
+  const { commission, other: otherWithRetention, result } = resultAt(gross, params);
+  // as linhas somam exatamente: o que é retenção sai da linha de outros percentuais
+  const other = otherWithRetention - (retentionCounted ? retentionCents : 0);
+  const resultWithRetentionsCents = retentionCounted ? result : result - retentionCents;
 
   const pending: Pending[] = [];
   const add = (code: PendingCode) => pending.push({ code, message: PENDING_MESSAGES[code] });
@@ -370,6 +423,12 @@ function evaluate(input: OfferInput): OfferResult {
   if (input.tollPayer === "contractor") notify("VALE_PEDAGIO_CONFERIR");
   // o dono só vai saber o custo fixo por dia depois de usar o app: avisa, mas não trava a análise
   if (input.fixedCostPerDayCents === null) notify("CUSTO_FIXO_NAO_INFORMADO");
+  if (input.retention) {
+    if (retentionApplies && !retentionCounted) notify("RETENCAO_NAO_CONTADA");
+    else if (input.retention.profile === "autonomo" && input.retention.payer === "pessoa_fisica") notify("RETENCAO_PF");
+    else if (input.retention.profile === "mei") notify("RETENCAO_MEI");
+    else if (input.retention.profile === "empresa") notify("RETENCAO_EMPRESA");
+  }
   if (decision === "compensa" && financingCostCents > 0 && mul(resultAfterFinancingCents, 10000) < mul(input.targetMarginBp, gross)) {
     notify("COMPENSA_SO_SEM_PRAZO");
   }
@@ -409,6 +468,13 @@ function evaluate(input: OfferInput): OfferResult {
     stressResultCents,
     stressMarginBp: gross > 0 ? roundDiv(mul(stressResultCents, 10000), gross) : null,
     robustness,
+    retentionApplies,
+    retentionCents,
+    retentionInssCents,
+    retentionSestSenatCents,
+    retentionCounted,
+    resultWithRetentionsCents,
+    marginWithRetentionsBp: gross > 0 ? roundDiv(mul(resultWithRetentionsCents, 10000), gross) : null,
     decision,
     complete: pending.length === 0,
     pending,

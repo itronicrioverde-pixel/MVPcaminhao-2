@@ -151,6 +151,17 @@ A ordem é a que mais reduz erro por unidade de trabalho e a que menos mexe em d
 | Quem define a margem? | **O dono** | O campo começa vazio, sem número pronto |
 | Custo fixo por dia | **Só depois de o dono usar o app e alimentá-lo** | Em branco não trava mais a análise: aparece um aviso de que ele não entrou na conta. No modo rápido o "custo por km, tudo incluso" já cobre o fixo |
 
+### Respostas de 13/11 e o que foi feito
+
+| Resposta do dono | O que mudou no app |
+|---|---|
+| O caminhão é de **9 eixos**, mas o app tem que servir qualquer caminhão | Seletor "Eixos do conjunto" (de 2 a 9, padrão 9). Botão para usar o rendimento de referência da ANTT por eixos (9 eixos = 1,70 km/L), sempre com o aviso de que **não é o consumo do caminhão**. Para 8 eixos a ANTT não tem referência e o app não inventa |
+| O dono é **pessoa física**, mas deve haver opção para **MEI** e **empresa** | Cartão "Seu perfil e as retenções": Autônomo, MEI ou Empresa, e quem paga o frete (empresa ou pessoa física). Só o autônomo contratado por empresa recebe a **estimativa** de INSS e SEST/SENAT (2,7% do frete bruto); nos outros casos o app só avisa e manda conferir o recibo |
+| **Sem informação sobre o recibo** | A retenção **não entra no resultado por padrão**: aparece como estimativa, com quanto o resultado cairia. O dono liga "Contar as retenções estimadas no resultado" quando confirmar no recibo |
+| O app tem que **medir o combustível sozinho**, pelo odômetro ou outra alternativa | Card "Medir meu consumo (odômetro e litros)": de tanque cheio a tanque cheio, separa **carregado**, **vazio** e **misto** (carregado e vazio juntos). O botão "Usar no cálculo" preenche o consumo; no modo rápido calcula a média da viagem com os km vazios e carregados informados. Os registros ficam só no aparelho |
+
+**Ainda não feito:** separar o pedágio em carregado e vazio (cada um com o seu pagador) e guardar as medições de consumo no banco, junto com as viagens, para o app aprender com o tempo.
+
 Confirmado pelo dono: os 80% são sobre o **frete total (bruto)**, não sobre o líquido.
 
 Também confirmado: quando o dono paga o pedágio, o contratante **não reembolsa**; isso é combinado antes de aceitar o frete, então o frete precisa cobri-lo. E o contrato do dono **obriga o caminhão a rodar vazio**, por isso o rendimento vazio e carregado importa (ver `pesquisa-vale-pedagio-frete-arla.md`, parte 2).

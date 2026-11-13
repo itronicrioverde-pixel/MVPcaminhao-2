@@ -197,6 +197,9 @@ function loadRemembered(): OfferForm {
     }
     if (saved.commissionBase === "gross" || saved.commissionBase === "net") form.commissionBase = saved.commissionBase;
     if (saved.mode === "quick" || saved.mode === "detailed") form.mode = saved.mode;
+    if (saved.profile === "autonomo" || saved.profile === "mei" || saved.profile === "empresa") form.profile = saved.profile;
+    if (saved.payer === "empresa" || saved.payer === "pessoa_fisica") form.payer = saved.payer;
+    if (typeof saved.countRetentions === "boolean") form.countRetentions = saved.countRetentions;
     if (typeof saved.arlaUse === "boolean") form.arlaUse = saved.arlaUse;
   } catch {
     // armazenamento bloqueado ou conteúdo inválido: começa vazio
@@ -220,7 +223,7 @@ export function OfferView() {
 
   useEffect(() => {
     try {
-      const remembered: Record<string, string | boolean> = { commissionBase: form.commissionBase, arlaUse: form.arlaUse, mode: form.mode };
+      const remembered: Record<string, string | boolean> = { commissionBase: form.commissionBase, arlaUse: form.arlaUse, mode: form.mode, profile: form.profile, payer: form.payer, countRetentions: form.countRetentions };
       for (const key of REMEMBERED_TEXT) remembered[key] = form[key];
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(remembered));
     } catch {
@@ -305,7 +308,8 @@ export function OfferView() {
     ? result.targetPriceCents - result.grossFreightCents
     : null;
 
-  const showNotices = result ? result.notices.filter((notice) => notice.code !== "PISO_NAO_CALCULADO") : [];
+  const showNotices = result ? result.notices.filter((notice) => notice.code !== "PISO_NAO_CALCULADO" && notice.code !== "RETENCAO_NAO_CONTADA") : [];
+  const retentionNotice = result?.notices.find((notice) => notice.code === "RETENCAO_NAO_CONTADA");
   const showDieselSlack = result && input && input.dieselPriceMilli && result.fuelCostCents !== null && result.grossFreightCents > 0;
 
   return (
@@ -546,6 +550,41 @@ export function OfferView() {
             <NumField field="margin" label="Margem que você quer (%)" value={form.margin} onChange={set("margin")} error={built.errors.margin} hint="Quanto do frete você quer que sobre, depois de todos os custos. Quem define é o dono." />
           </Card>
 
+          <Card title="Seu perfil e as retenções">
+            <div>
+              <label htmlFor="offer-profile" className="text-sm font-semibold text-[#34443e]">Você é</label>
+              <select
+                id="offer-profile"
+                value={form.profile}
+                onChange={(event) => set("profile")(event.target.value === "mei" ? "mei" : event.target.value === "empresa" ? "empresa" : "autonomo")}
+                className="mt-2 h-12 w-full rounded-xl border border-input bg-white px-3 text-base"
+              >
+                <option value="autonomo">Autônomo (pessoa física)</option>
+                <option value="mei">MEI</option>
+                <option value="empresa">Empresa</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="offer-payer" className="text-sm font-semibold text-[#34443e]">Quem paga o frete</label>
+              <select
+                id="offer-payer"
+                value={form.payer}
+                onChange={(event) => set("payer")(event.target.value === "pessoa_fisica" ? "pessoa_fisica" : "empresa")}
+                className="mt-2 h-12 w-full rounded-xl border border-input bg-white px-3 text-base"
+              >
+                <option value="empresa">Uma empresa (a transportadora, por exemplo)</option>
+                <option value="pessoa_fisica">Uma pessoa física</option>
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <CheckField label="Contar as retenções estimadas no resultado" checked={form.countRetentions} onChange={set("countRetentions")} />
+              <p className="text-xs text-[#718078]">
+                Se você é autônomo e o frete é pago por uma empresa, ela costuma reter INSS (11%) e SEST/SENAT (2,5%), ambos sobre 20% do frete bruto. É uma estimativa pela regra do SEST SENAT: confira no recibo da transportadora.
+                Se você já lançou os descontos do recibo em “Descontos já combinados”, não conte de novo.
+              </p>
+            </div>
+          </Card>
+
           {!quick ? <details className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
             <summary className="min-h-11 cursor-pointer text-lg font-bold">Mais opções</summary>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -659,6 +698,21 @@ export function OfferView() {
                   </div>
                 ) : null}
 
+                {result.retentionApplies ? (
+                  <div className="rounded-[22px] border border-black/[.05] bg-white p-5 text-sm shadow-sm">
+                    <h3 className="mb-1 text-lg font-bold">Retenções estimadas</h3>
+                    <Row label="INSS" detail="11% sobre 20% do frete" value={`− ${formatBRL(result.retentionInssCents)}`} />
+                    <Row label="SEST/SENAT" detail="2,5% sobre 20% do frete" value={`− ${formatBRL(result.retentionSestSenatCents)}`} />
+                    <Row strong label="Total estimado" value={`− ${formatBRL(result.retentionCents)}`} />
+                    {result.retentionCounted ? (
+                      <p className="mt-2 font-semibold text-[#34443e]">Já está contado no resultado.</p>
+                    ) : (
+                      <p className="mt-2 font-semibold text-amber-800">{retentionNotice?.message} Com essa retenção, o resultado seria {formatBRL(result.resultWithRetentionsCents)} (margem {formatBp(result.marginWithRetentionsBp)}).</p>
+                    )}
+                    <p className="mt-2 text-xs text-[#718078]">Estimativa pela regra do SEST SENAT, sem o teto do INSS. O que vale é o recibo da transportadora.</p>
+                  </div>
+                ) : null}
+
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Quanto cobrar</h3>
                   <Row label="Frete mínimo para empatar" detail="O menor frete em que você não perde dinheiro" value={result.breakEvenCents === null ? "—" : formatBRL(result.breakEvenCents)} />
@@ -734,6 +788,7 @@ export function OfferView() {
                   {input.deductionsCents > 0 ? <Row label="Descontos" value={`− ${formatBRL(input.deductionsCents)}`} /> : null}
                   {input.commissionBp > 0 ? <Row label={`Comissão (${formatBp(input.commissionBp)})`} value={`− ${formatBRL(result.commissionCents)}`} /> : null}
                   {input.otherPercentBp > 0 ? <Row label={`Outros percentuais (${formatBp(input.otherPercentBp)})`} value={`− ${formatBRL(result.otherPercentCents)}`} /> : null}
+                  {result.retentionCounted ? <Row label="Retenções estimadas (INSS e SEST/SENAT)" value={`− ${formatBRL(result.retentionCents)}`} /> : null}
                   <Row strong label="Resultado" value={formatBRL(result.resultCents)} />
                 </div>
               </>

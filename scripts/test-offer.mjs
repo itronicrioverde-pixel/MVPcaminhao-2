@@ -18,7 +18,7 @@ try{
     legs:[{kind:'empty',km:120,kmPerLiterCenti:300},{kind:'loaded',km:600,kmPerLiterCenti:200}],
     dieselPriceMilli:6790,tollCents:45000,extraCostsCents:0,vehicleCostCentsPerKm:150,
     deductionsCents:0,commissionBp:1300,commissionBase:'gross',otherPercentBp:0,targetMarginBp:2000,durationHours:null,
-    tollPayer:'me',arla:null,fixedCostPerDayCents:0,floor:null,advanceBp:0,balanceDays:null,moneyCostMonthlyBp:0,safetyBp:0,
+    tollPayer:'me',arla:null,fixedCostPerDayCents:0,floor:null,advanceBp:0,balanceDays:null,moneyCostMonthlyBp:0,safetyBp:0,retention:null,
     ...over});
   const codes=r=>r.pending.map(p=>p.code).sort();
 
@@ -266,6 +266,49 @@ try{
   assert.equal(o.costPerKmFromYear(1000000,0),null,'sem km rodados não há média');
   assert.throws(()=>o.costPerKmFromYear(-1,1000),RangeError);assert.throws(()=>o.costPerKmFromYear(1000,1.5),RangeError);
   for(const bad of [base({safetyBp:-1}),base({safetyBp:10001}),base({safetyBp:1.5})])assert.throws(()=>o.analyzeOffer(bad),RangeError);
+
+  // 21. retenções do autônomo contratado por empresa: INSS 11% e SEST/SENAT 2,5%, ambos sobre 20% do frete bruto
+  const AUTONOMO={profile:'autonomo',payer:'empresa',count:false};
+  const est=o.analyzeOffer(base({retention:AUTONOMO}));
+  assert.equal(est.retentionApplies,true);
+  assert.equal(est.retentionCents,27162,'2,7% de R$ 10.060,00 = R$ 271,62');
+  assert.equal(est.retentionInssCents,22132,'11% de 20% = R$ 221,32');
+  assert.equal(est.retentionSestSenatCents,5030,'2,5% de 20% = R$ 50,30');
+  assert.equal(est.retentionInssCents+est.retentionSestSenatCents,est.retentionCents,'as duas linhas somam o total');
+  assert.equal(est.retentionCounted,false);assert.equal(est.resultCents,full.resultCents,'sem contar, o resultado não muda');
+  assert.equal(est.resultWithRetentionsCents,491360-27162);assert.equal(est.marginWithRetentionsBp,4614);
+  assert.ok(est.notices.some(n=>n.code==='RETENCAO_NAO_CONTADA'),'avisa que a retenção ainda não está no resultado');
+  const official=o.analyzeOffer(base({freight:{kind:'fixed',cents:200000},retention:AUTONOMO}));
+  assert.equal(official.retentionCents,5400,'exemplo da cartilha do SEST SENAT: frete de R$ 2.000');assert.equal(official.retentionInssCents,4400);assert.equal(official.retentionSestSenatCents,1000);
+  // contando no resultado: é o mesmo que um percentual de 2,7% sobre o frete
+  const counted=o.analyzeOffer(base({retention:{...AUTONOMO,count:true}}));
+  const asPercent=o.analyzeOffer(base({otherPercentBp:270}));
+  assert.equal(counted.retentionCounted,true);assert.equal(counted.resultCents,464198);assert.equal(counted.resultWithRetentionsCents,counted.resultCents);
+  for(const k of ['resultCents','marginBp','breakEvenCents','targetPriceCents','decision'])assert.equal(counted[k],asPercent[k],k);
+  assert.equal(counted.otherPercentCents,0,'a retenção não aparece duas vezes');assert.ok(!counted.notices.some(n=>n.code==='RETENCAO_NAO_CONTADA'));
+  assert.ok(counted.breakEvenCents>full.breakEvenCents,'com a retenção o frete mínimo sobe');
+  // somada a outros percentuais do usuário, nada se perde
+  const both=o.analyzeOffer(base({otherPercentBp:250,retention:{...AUTONOMO,count:true}}));
+  const bothRef=o.analyzeOffer(base({otherPercentBp:520}));
+  assert.equal(both.resultCents,bothRef.resultCents);assert.equal(both.otherPercentCents+both.retentionCents,bothRef.otherPercentCents,'as linhas somam');
+  // a decisão usa o resultado que o dono escolheu contar
+  const withRet=(cents)=>o.analyzeOffer(base({retention:{...AUTONOMO,count:true},freight:{kind:'fixed',cents}}));
+  assert.equal(withRet(counted.breakEvenCents-1).decision,'prejuizo','um centavo abaixo do frete mínimo, já contando a retenção, dá prejuízo');
+  assert.notEqual(withRet(counted.breakEvenCents).decision,'prejuizo');
+  assert.equal(o.analyzeOffer(base({freight:{kind:'fixed',cents:counted.breakEvenCents-1}})).decision!=='prejuizo',true,'sem contar a retenção o mesmo frete ainda não dá prejuízo');
+  // outros perfis: o app não inventa retenção
+  const pf=o.analyzeOffer(base({retention:{profile:'autonomo',payer:'pessoa_fisica',count:true}}));
+  assert.equal(pf.retentionApplies,false);assert.equal(pf.retentionCents,0);assert.equal(pf.resultCents,full.resultCents,'contar não muda nada onde não há retenção');
+  assert.ok(pf.notices.some(n=>n.code==='RETENCAO_PF'));
+  const mei=o.analyzeOffer(base({retention:{profile:'mei',payer:'empresa',count:true}}));
+  assert.equal(mei.retentionApplies,false);assert.equal(mei.retentionCents,0);assert.ok(mei.notices.some(n=>n.code==='RETENCAO_MEI'));
+  const emp=o.analyzeOffer(base({retention:{profile:'empresa',payer:'empresa',count:false}}));
+  assert.equal(emp.retentionApplies,false);assert.ok(emp.notices.some(n=>n.code==='RETENCAO_EMPRESA'));
+  for(const r of [pf,mei,emp])assert.equal(r.resultWithRetentionsCents,r.resultCents);
+  const none=o.analyzeOffer(base());
+  assert.equal(none.retentionApplies,false);assert.equal(none.retentionCents,0);assert.ok(!none.notices.some(n=>n.code.startsWith('RETENCAO')));
+  assert.equal(o.analyzeOffer(base({freight:{kind:'fixed',cents:0},retention:AUTONOMO})).retentionCents,0,'sem frete não há retenção');
+  for(const bad of [base({retention:{profile:'x',payer:'empresa',count:false}}),base({retention:{profile:'autonomo',payer:'y',count:false}}),base({retention:{profile:'autonomo',payer:'empresa',count:'sim'}})])assert.throws(()=>o.analyzeOffer(bad),RangeError);
 
   // 12. dinheiro sempre inteiro, sem sobra de ponto flutuante
   for(const r of [fuel,full,noKpl,loss]){for(const v of [r.knownCostsCents,r.resultCents,r.commissionCents])assert.ok(Number.isInteger(v));}
