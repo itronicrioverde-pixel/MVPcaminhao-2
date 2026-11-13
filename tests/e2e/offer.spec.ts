@@ -626,3 +626,129 @@ test("o número de eixos escolhido fica guardado neste aparelho", async ({ page 
   await openOffer(page, "quick");
   await expect(page.getByLabel("Eixos do conjunto", { exact: true })).toHaveValue("7");
 });
+
+
+// ---------- medir o consumo pelo odômetro ----------
+
+async function openMeasure(page: Page) {
+  await page.getByText("Medir meu consumo (odômetro e litros)", { exact: true }).click();
+  await expect(page.getByLabel("Odômetro (km)", { exact: true })).toBeVisible();
+}
+
+async function addFuel(page: Page, odometer: string, liters: string, full: boolean, state: "loaded" | "empty") {
+  await fill(page, "Odômetro (km)", odometer);
+  await fill(page, "Litros abastecidos", liters);
+  const box = page.getByLabel("Encheu o tanque até o máximo", { exact: true });
+  if (full) await box.check();
+  else await box.uncheck();
+  await page.getByLabel("Como foi o trecho até aqui", { exact: true }).selectOption(state);
+  await page.getByRole("button", { name: "Adicionar abastecimento", exact: true }).click();
+}
+
+// 4 ciclos de tanque cheio a tanque cheio: 2 carregados (1.200 km, 630 L), 1 vazio (600 km, 240 L), 1 misto (600 km, 220 L)
+async function addExampleFuel(page: Page) {
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await addFuel(page, "100.600", "300", true, "loaded");
+  await addFuel(page, "101.000", "160", false, "empty");
+  await addFuel(page, "101.200", "80", true, "empty");
+  await addFuel(page, "101.800", "330", true, "loaded");
+  await addFuel(page, "102.100", "100", false, "loaded");
+  await addFuel(page, "102.400", "120", true, "empty");
+}
+
+const measured = (page: Page) => page.getByTestId("consumption-report");
+
+test("medir consumo: explica como fazer e não inventa nada sem dois tanques cheios", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  const box = page.locator("details", { hasText: "Medir meu consumo (odômetro e litros)" });
+  await expect(box).toContainText("tanque até o máximo");
+  await expect(measured(page)).toContainText("Ainda não dá para medir");
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await expect(measured(page)).toContainText("Ainda não dá para medir");
+});
+
+test("medir consumo: carregado, vazio e misto separados, a partir do odômetro e dos litros", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addExampleFuel(page);
+  const report = measured(page);
+  await expect(report).toContainText("Carregado");
+  await expect(report).toContainText("1,90 km/L");
+  await expect(report).toContainText("2 ciclos");
+  await expect(report).toContainText("1.200 km");
+  await expect(report).toContainText("Vazio");
+  await expect(report).toContainText("2,50 km/L");
+  await expect(report).toContainText("1 ciclo");
+  await expect(report).toContainText("Misto");
+  await expect(report).toContainText("2,73 km/L");
+  await expect(report).toContainText("Geral");
+  await expect(report).toContainText("2,20 km/L");
+});
+
+test("medir consumo, modo detalhado: usa o carregado e o vazio medidos", async ({ page }) => {
+  await openOffer(page);
+  await openMeasure(page);
+  await addExampleFuel(page);
+  await page.getByRole("button", { name: "Usar no cálculo", exact: true }).click();
+  await expect(page.getByLabel("Consumo carregado (km/L)", { exact: true })).toHaveValue("1,90");
+  await expect(page.getByLabel("Consumo vazio (km/L)", { exact: true })).toHaveValue("2,50");
+});
+
+test("medir consumo, modo rápido: média da viagem com o vazio e o carregado do jeito que ela é", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fill(page, "Km carregado", "600");
+  await fill(page, "Km vazio (até a coleta e na volta)", "120");
+  await openMeasure(page);
+  await addExampleFuel(page);
+  await page.getByRole("button", { name: "Usar no cálculo", exact: true }).click();
+  // 600 km a 1,90 e 120 km a 2,50: 720 km em 363,8 L = 1,98 km/L
+  await expect(page.getByLabel("Consumo médio (km/L)", { exact: true })).toHaveValue("1,98");
+  await expect(page.getByText("Média desta viagem", { exact: false })).toBeVisible();
+});
+
+test("medir consumo, modo rápido sem a distância da viagem usa a média geral", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addExampleFuel(page);
+  await page.getByRole("button", { name: "Usar no cálculo", exact: true }).click();
+  await expect(page.getByLabel("Consumo médio (km/L)", { exact: true })).toHaveValue("2,20");
+  await expect(page.getByText("Média geral das suas medidas", { exact: false })).toBeVisible();
+});
+
+test("medir consumo: números errados são recusados com aviso", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await addFuel(page, "100.000", "300", true, "loaded");
+  await expect(page.getByText("mesmo odômetro", { exact: false })).toBeVisible();
+  await fill(page, "Odômetro (km)", "100.500");
+  await fill(page, "Litros abastecidos", "");
+  await page.getByRole("button", { name: "Adicionar abastecimento", exact: true }).click();
+  await expect(page.getByText("Informe o odômetro e os litros", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(1);
+});
+
+test("medir consumo: rendimento fora do normal é avisado", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await addFuel(page, "100.600", "1", true, "loaded");
+  await expect(measured(page)).toContainText("fora do normal");
+});
+
+test("medir consumo: dá para remover um abastecimento e os registros ficam guardados neste aparelho", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addExampleFuel(page);
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(7);
+  await page.getByRole("button", { name: "Remover abastecimento 7", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(6);
+  await expect(measured(page)).not.toContainText("Misto");
+
+  await page.reload();
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(6);
+  await expect(measured(page)).toContainText("1,90 km/L");
+});

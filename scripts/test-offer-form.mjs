@@ -19,7 +19,7 @@ try{
   const bad=(parser,text)=>{const r=parser(text);assert.equal(r.value,null,`"${text}" devia ser recusado`);assert.equal(typeof r.error,'string',`"${text}" precisa de mensagem`);assert.ok(r.error.length>8);};
 
   // vazio é desconhecido, não zero
-  for(const p of [f.parseMoney,f.parsePricePerLiter,f.parseConsumption,f.parsePercent,f.parseKm,f.parseWeightKg,f.parseDays,f.parseCcd,f.parseBalanceDays])for(const t of ['',' ','  ','R$',' R$ ']) ok(p,t,null);
+  for(const p of [f.parseMoney,f.parsePricePerLiter,f.parseConsumption,f.parsePercent,f.parseKm,f.parseWeightKg,f.parseDays,f.parseCcd,f.parseBalanceDays,f.parseLiters])for(const t of ['',' ','  ','R$',' R$ ']) ok(p,t,null);
 
   // dinheiro (centavos)
   ok(f.parseMoney,'10060',1006000);ok(f.parseMoney,'10.060',1006000);ok(f.parseMoney,'10.060,00',1006000);ok(f.parseMoney,'R$ 10.060,00',1006000);
@@ -31,6 +31,9 @@ try{
   ok(f.parsePricePerLiter,'6,79',6790);ok(f.parsePricePerLiter,'6.79',6790);ok(f.parsePricePerLiter,'6,799',6799);ok(f.parsePricePerLiter,'6.790',6790);ok(f.parsePricePerLiter,'7',7000);
   bad(f.parsePricePerLiter,'6,7999');bad(f.parsePricePerLiter,'-6');
 
+  // litros abastecidos (mililitros): ponto com 3 dígitos depois é milhar ("1.200 L"), ponto simples é decimal
+  ok(f.parseLiters,'300',300000);ok(f.parseLiters,'300,5',300500);ok(f.parseLiters,'300.5',300500);ok(f.parseLiters,'1.200',1200000);ok(f.parseLiters,'0,5',500);ok(f.parseLiters,'80 L',80000);
+  bad(f.parseLiters,'-1');bad(f.parseLiters,'abc');bad(f.parseLiters,'1,2345');
   // consumo (centésimos de km/L)
   ok(f.parseConsumption,'2,5',250);ok(f.parseConsumption,'3',300);ok(f.parseConsumption,'2.45',245);ok(f.parseConsumption,'0',0);bad(f.parseConsumption,'2,456');
 

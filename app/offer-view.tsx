@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, formatKmPerLiter } from "@/lib/fuel";
+import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
 import { analyzeOffer, costPerKmFromYear, type Decision, type OfferResult } from "@/lib/offer";
-import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, parseKm, parseMoney, type OfferForm } from "@/lib/offer-form";
+import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, parseKm, parseLiters, parseMoney, type OfferForm } from "@/lib/offer-form";
 
 // Só o que é do caminhão e do jeito de trabalhar fica guardado neste aparelho.
 // O que é da oferta (frete, quilômetros, pedágio, duração) começa vazio a cada análise.
@@ -13,6 +13,23 @@ const STORAGE_KEY = "rota-financeira:analise-de-frete:v1";
 const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "kplAvg", "diesel", "vehicleKm", "vehicleKmAll", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost", "advance", "balanceDays", "axles"] as const;
 
 const ANTT_CALCULATOR = "https://calculadorafrete.antt.gov.br/";
+const FUEL_STORAGE_KEY = "rota-financeira:consumo-medido:v1";
+
+type StoredFuel = FuelRecord & { id: string };
+
+function loadFuelRecords(): StoredFuel[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(FUEL_STORAGE_KEY) ?? "[]") as unknown;
+    if (!Array.isArray(saved)) return [];
+    const records = saved.filter((item): item is StoredFuel =>
+      typeof item === "object" && item !== null && typeof (item as StoredFuel).id === "string",
+    );
+    return validateFuelRecords(records).length === 0 ? records : [];
+  } catch {
+    return [];
+  }
+}
 
 const TONES: Record<Decision, { title: string; box: string; icon: typeof Calculator }> = {
   compensa: { title: "Compensa", box: "border-emerald-300 bg-emerald-50 text-emerald-950", icon: CircleCheck },
@@ -124,6 +141,22 @@ function AnttReference({ axles, onUse, loadedOnly }: { axles: string; onUse: (km
   );
 }
 
+function GroupRow({ label, group, note }: { label: string; group: ConsumptionGroup | null; note?: string }) {
+  if (!group) return null;
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-1.5">
+      <div className="min-w-0">
+        <span className="font-semibold">{label}</span>
+        <span className="block text-xs text-[#718078]">
+          {group.cycles} {group.cycles === 1 ? "ciclo" : "ciclos"} · {new Intl.NumberFormat("pt-BR").format(group.km)} km{note ? ` · ${note}` : ""}
+        </span>
+        {!isPlausibleKmPerLiter(group.kmPerLiterCenti) ? <span className="block text-xs font-semibold text-red-700">Esse rendimento está fora do normal: confira o odômetro e os litros.</span> : null}
+      </div>
+      <span className="shrink-0 font-black tabular-nums">{formatKmPerLiter(group.kmPerLiterCenti)} km/L</span>
+    </div>
+  );
+}
+
 /** Comentário que só abre se a pessoa clicar, para não poluir a tela de quem já sabe. */
 function HelpNote({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
@@ -174,6 +207,13 @@ function loadRemembered(): OfferForm {
 export function OfferView() {
   // Esta tela só abre depois do clique no menu, nunca vem pronta do servidor: ler aqui é seguro.
   const [form, setForm] = useState<OfferForm>(loadRemembered);
+  const [fuelRecords, setFuelRecords] = useState<StoredFuel[]>(loadFuelRecords);
+  const [fuelOdometer, setFuelOdometer] = useState("");
+  const [fuelLiters, setFuelLiters] = useState("");
+  const [fuelFull, setFuelFull] = useState(true);
+  const [fuelState, setFuelState] = useState<"loaded" | "empty">("loaded");
+  const [fuelError, setFuelError] = useState<string | null>(null);
+  const [fuelUsed, setFuelUsed] = useState<string | null>(null);
   const [yearSpend, setYearSpend] = useState("");
   const [yearKm, setYearKm] = useState("");
   const set = <K extends keyof OfferForm>(key: K) => (value: OfferForm[K]) => setForm((current) => ({ ...current, [key]: value }));
@@ -187,6 +227,56 @@ export function OfferView() {
       // sem armazenamento: a análise continua funcionando
     }
   }, [form]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(FUEL_STORAGE_KEY, JSON.stringify(fuelRecords));
+    } catch {
+      // sem armazenamento: a medição continua nesta tela
+    }
+  }, [fuelRecords]);
+
+  const consumption = useMemo(() => (validateFuelRecords(fuelRecords).length === 0 ? measureConsumption(fuelRecords) : null), [fuelRecords]);
+
+  function addFuelRecord() {
+    const odometer = parseKm(fuelOdometer);
+    const liters = parseLiters(fuelLiters);
+    if (odometer.error || liters.error) return setFuelError(odometer.error ?? liters.error);
+    if (odometer.value === null || liters.value === null) return setFuelError("Informe o odômetro e os litros.");
+    const next = [...fuelRecords, { id: `${Date.now()}-${fuelRecords.length}`, odometerKm: odometer.value, litersMilli: liters.value, full: fuelFull, state: fuelState }];
+    const errors = validateFuelRecords(next);
+    if (errors.length > 0) return setFuelError(errors[0]);
+    setFuelError(null);
+    setFuelRecords(next);
+    setFuelOdometer("");
+    setFuelLiters("");
+  }
+
+  function useMeasured() {
+    if (!consumption) return;
+    const { loaded, empty, overall } = consumption;
+    if (form.mode === "detailed") {
+      if (loaded) set("kplLoaded")(formatKmPerLiter(loaded.kmPerLiterCenti));
+      if (empty) set("kplEmpty")(formatKmPerLiter(empty.kmPerLiterCenti));
+      setFuelUsed(
+        loaded && empty ? "Preenchi o consumo carregado e o vazio com o que você mediu."
+          : loaded ? "Preenchi só o carregado. Para o vazio, ainda falta medir."
+          : empty ? "Preenchi só o vazio. Para o carregado, ainda falta medir."
+          : "Ainda não há medida só de carregado ou só de vazio.",
+      );
+      return;
+    }
+    const kmLoaded = parseKm(form.kmLoaded).value ?? 0;
+    const kmEmpty = parseKm(form.kmEmptyTo).value ?? 0;
+    const blended = loaded && empty ? blendedKmPerLiterCenti(kmLoaded, loaded.kmPerLiterCenti, kmEmpty, empty.kmPerLiterCenti) : null;
+    if (blended !== null) {
+      set("kplAvg")(formatKmPerLiter(blended));
+      setFuelUsed(`Média desta viagem, com ${kmLoaded} km carregado e ${kmEmpty} km vazio.`);
+    } else if (overall) {
+      set("kplAvg")(formatKmPerLiter(overall.kmPerLiterCenti));
+      setFuelUsed("Média geral das suas medidas. Informe os km carregado e vazio e meça os dois para uma média mais certa para esta viagem.");
+    }
+  }
 
   const built = useMemo(() => buildOfferInput(form), [form]);
   const outcome = useMemo(() => {
@@ -307,6 +397,72 @@ export function OfferView() {
               </>
             )}
           </Card>
+
+          <details className="rounded-[22px] border border-black/[.05] bg-white p-5 shadow-sm">
+            <summary className="min-h-11 cursor-pointer text-lg font-bold">Medir meu consumo (odômetro e litros)</summary>
+            <div className="mt-3 space-y-4 text-sm">
+              <p className="text-[#34443e]">
+                Encha o tanque até o máximo e anote o odômetro e os litros: esse primeiro cheio só marca o ponto de partida.
+                No próximo abastecimento, encha até o máximo de novo e anote. O app divide os km rodados pelos litros repostos e separa o que foi carregado do que foi vazio.
+                Se parar para abastecer no meio sem encher o tanque, marque “Encheu o tanque até o máximo” como desligado e anote do mesmo jeito.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <NumField field="fuelOdometer" label="Odômetro (km)" value={fuelOdometer} onChange={setFuelOdometer} numeric />
+                <NumField field="fuelLiters" label="Litros abastecidos" value={fuelLiters} onChange={setFuelLiters} />
+                <div>
+                  <label htmlFor="offer-fuelState" className="text-sm font-semibold text-[#34443e]">Como foi o trecho até aqui</label>
+                  <select
+                    id="offer-fuelState"
+                    value={fuelState}
+                    onChange={(event) => setFuelState(event.target.value === "empty" ? "empty" : "loaded")}
+                    className="mt-2 h-12 w-full rounded-xl border border-input bg-white px-3 text-base"
+                  >
+                    <option value="loaded">Carregado</option>
+                    <option value="empty">Vazio</option>
+                  </select>
+                </div>
+                <div className="flex items-end"><CheckField label="Encheu o tanque até o máximo" checked={fuelFull} onChange={setFuelFull} /></div>
+              </div>
+              {fuelError ? <p className="font-semibold text-red-700">{fuelError}</p> : null}
+              <button type="button" onClick={addFuelRecord} className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white">Adicionar abastecimento</button>
+
+              {fuelRecords.length > 0 ? (
+                <ul className="divide-y divide-black/10 rounded-xl bg-[#f3f6f4]">
+                  {[...fuelRecords].sort((a, b) => a.odometerKm - b.odometerKm).map((record, index) => (
+                    <li key={record.id} className="flex items-center justify-between gap-3 px-4 py-2">
+                      <span>
+                        {new Intl.NumberFormat("pt-BR").format(record.odometerKm)} km · {formatLiters(record.litersMilli)} · {record.full ? "cheio" : "parcial"} · {record.state === "loaded" ? "carregado" : "vazio"}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remover abastecimento ${index + 1}`}
+                        onClick={() => setFuelRecords((current) => current.filter((item) => item.id !== record.id))}
+                        className="min-h-11 min-w-11 rounded-lg text-lg font-bold text-red-700"
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              <div data-testid="consumption-report" className="rounded-xl bg-[#f3f6f4] p-4">
+                {consumption && consumption.overall ? (
+                  <>
+                    <GroupRow label="Carregado" group={consumption.loaded} />
+                    <GroupRow label="Vazio" group={consumption.empty} />
+                    <GroupRow label="Misto" group={consumption.mixed} note="carregado e vazio juntos, não dá para separar" />
+                    <GroupRow label="Geral" group={consumption.overall} />
+                    <button type="button" onClick={useMeasured} className="mt-3 min-h-11 rounded-lg bg-[#0d5c43] px-4 text-sm font-bold text-white">Usar no cálculo</button>
+                    {fuelUsed ? <p className="mt-2 text-xs text-[#34443e]">{fuelUsed}</p> : null}
+                  </>
+                ) : (
+                  <p>Ainda não dá para medir: precisa de dois abastecimentos com o tanque cheio. Os parciais do meio entram na conta.</p>
+                )}
+              </div>
+              <p className="text-xs text-[#718078]">Os abastecimentos ficam guardados só neste aparelho. Não são enviados para lugar nenhum.</p>
+            </div>
+          </details>
 
           <Card title="Custos da viagem">
             <div>

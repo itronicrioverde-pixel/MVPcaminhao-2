@@ -49,6 +49,8 @@ function parseScaled(text: string, decimals: number, dotIsThousands: boolean): P
 export const parseMoney = (text: string) => parseScaled(text, 2, true);
 /** R$/L -> milésimos de real. O ponto é sempre decimal: "6.790" é 6,79. */
 export const parsePricePerLiter = (text: string) => parseScaled(text, 3, false);
+/** Litros abastecidos -> mililitros. "1.200" é 1.200 L; "300.5" e "300,5" são 300,5 L. */
+export const parseLiters = (text: string) => parseScaled(text.replace(/\s*[lL]\s*$/, ""), 3, true);
 /** km/L -> centésimos de km/L. */
 export const parseConsumption = (text: string) => parseScaled(text, 2, false);
 /** % -> pontos-base, até 100%. */
