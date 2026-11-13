@@ -152,15 +152,103 @@ Levantamentos de 2016 a 2017 apontaram que o consumo real de ARLA ficou **muito 
 4. **O demonstrativo da transportadora traz INSS e SEST/SENAT?** Qual o perfil fiscal do dono (autônomo, MEI, empresa)?
 5. **O contrato obriga o caminhão a circular vazio na ida à coleta ou na volta?**
 
+## Parte 2 (13/11/2026): eixos, impostos por perfil fiscal e rendimento vazio x carregado
+
+### Respostas do dono (registradas)
+
+| Pergunta | Resposta |
+|---|---|
+| Ano do caminhão | Não se sabe. A ideia é usar o **número de eixos** |
+| Quando o dono paga o pedágio, o contratante reembolsa? | **Não.** Se o dono paga, eles combinam isso **antes de aceitar o frete** |
+| Os 80% são sobre o frete bruto? | **Sobre o frete total, não sobre o líquido** |
+| O contrato obriga o caminhão a rodar vazio? | **Sim** |
+
+Efeito no app: a base dos 80% já era o frete bruto, então **nada muda no cálculo**. O pedágio que o dono paga é custo combinado antes de aceitar o frete: o frete precisa cobri-lo.
+
+### A. Os eixos bastam?
+
+| Para quê | Os eixos bastam? | Por quê | Confiança |
+|---|---|---|---|
+| **Valor do pedágio** | **Sim**, desde que seja o total do **conjunto** (cavalo + carreta), não só o "6x4" | A maioria das concessões usa o número de eixos como multiplicador da tarifa | Setor |
+| **Pedágio com o caminhão vazio** | Sim, e o vazio pode pagar **menos** | Eixos suspensos de veículo vazio são isentos (Lei 13.711/2018). A concessionária confere pelo MDF-e. Uma matéria do SETCESP fala em economia de mais de 30% | Setor |
+| **Rendimento de referência (km/L)** | **Sim, como ponto de partida** | A ANTT usa o rendimento **por número de eixos**: mediana de 3,5 km/L (3 eixos), 2,8 (4), 2,4 (5), **2,1 (6)**, **1,9 (7)** e 1,7 (9). Pesquisa de 2019, com muita variação (6 eixos: de 1,8 a 2,6) | **Oficial** (relatório ESALQ-LOG para a ANTT) |
+| **Quanto de ARLA** | Sim, **como regra da ANTT** | A ANTT usa 5% do diesel para todas as classes | **Oficial** |
+| **Se o caminhão usa ARLA ou não** | **Não** | Depende do motor (padrão de emissão, ou seja, do ano), não dos eixos. Caminhões feitos até 2011 normalmente não têm ARLA; os de 2012 em diante, sim (o ITL relata que a fase P6 não chegou aos pesados e a transição foi direta para a P7) | Setor |
+
+Conclusão: os eixos servem para **pedágio** e para uma **estimativa inicial de consumo**, mas **não dizem se o caminhão usa ARLA**. Como o ARLA pesa só cerca de 0,6 ponto de margem, dá para tratá-lo assim: **sem ARLA por padrão**, e o dono liga se o caminhão tiver o tanque. A tabela da ANTT é uma referência **para quem ainda não mediu**: ela não vale para o Actros 2646 especificamente.
+
+### B. Impostos e retenções: o que depende do perfil fiscal
+
+O que muda é **quem paga o frete** e **o que é o dono** (pessoa física autônoma, MEI ou empresa).
+
+| Perfil | O que as fontes dizem | Confiança |
+|---|---|---|
+| **Autônomo (TAC, pessoa física) contratado por empresa** | A empresa **retém e recolhe**: **INSS 11%** e **SEST/SENAT 2,5%**, ambos sobre uma base de **20% do frete bruto**, sem abater combustível nem manutenção. A retenção deve aparecer no recibo | **Oficial** (cartilha do SEST SENAT, IN RFB 2.110/2022, art. 103) para o SEST/SENAT. INSS: manuais de prefeituras e blogs |
+| **Autônomo contratado por pessoa física** | **Não há retenção.** O próprio transportador recolhe o SEST/SENAT na unidade e responde pelo seu INSS. Para o imposto de renda, a Receita diz que **no mínimo 10%** do que recebe de transporte de cargas é rendimento tributável | **Oficial** (SEST SENAT e Receita Federal) |
+| **MEI Caminhoneiro** | Paga o DAS (INSS de 12% do salário mínimo mais ICMS ou ISS). Limite de R$ 251.600 por ano. **Não achei** regra de retenção pelo contratante | Setor. Retenção: **não achei** |
+| **Empresa (Simples Nacional)** | Em regra **dispensada** de retenção de INSS (exceto o Anexo IV) e de IRRF e CSRF | Setor |
+| **Empresa (lucro presumido ou real)** | Retenções variam por regime e por tipo de serviço. **Não consegui fechar** uma regra | Não achei |
+
+**Exemplo oficial do SEST/SENAT:** frete de R$ 2.000 → base de R$ 400 → contribuição de R$ 10.
+**Com R$ 10.060 (autônomo contratado por empresa):** base de 20% = R$ 2.012,00. INSS: R$ 221,32. SEST/SENAT: R$ 50,30. Total: **R$ 271,62, ou 2,7% do frete**.
+
+Pontos a saber:
+- O INSS tem **teto**. Um blog fala em R$ 932,31 por retenção em 2026. Em fretes comuns isso não é alcançado. **Não confirmei** o valor em fonte oficial.
+- Para o imposto de renda, o desconto depende da tabela do ano e do total pago no mês. Em um frete isolado, é comum a base de 10% ficar na faixa de isenção, mas isso **o contador confirma**.
+- O INSS retido é contribuição do próprio autônomo (vale para a aposentadoria dele) e o SEST/SENAT dá direito a serviços. O dono decide, com o contador, se trata isso como custo ou não.
+
+**O caminho mais seguro para saber o perfil:** olhar o **recibo ou o demonstrativo** que a transportadora entrega. Se ele traz linhas de INSS e SEST/SENAT, o perfil é autônomo contratado por empresa. O app já tem o campo "Descontos já combinados" para lançar o valor real.
+
+### C. Rodar vazio: a ideia está certa?
+
+**O que a pesquisa confirma (oficial):**
+- O contrato que **obriga o caminhão a circular vazio** (na ida à coleta ou no retorno) faz o **vale-pedágio valer para esses trechos também** (ANTT, FAQ pergunta 9).
+- A Resolução ANTT 5.867/2020 prevê pagar o **retorno vazio** (92% do CCD × distância de retorno fixada em contrato), mas **só em casos específicos**: contêineres e frotas dedicadas ou fidelizadas por razões sanitárias ou de certificação (fonte do setor; a ANTT abriu audiência pública para revisar essa resolução e alterou normas em 2026). Fora desses casos, **o retorno vazio não é pago à parte**: o frete da ida precisa cobri-lo.
+
+**O que a pesquisa NÃO confirma:**
+- **Não achei nenhum estudo que quantifique** quanto um caminhão pesado gasta a mais carregado do que vazio. Só achei um teste com uma picape (13% a 14% a mais com 500 kg) e simulações que não dão esse percentual. A própria ANTT usa um rendimento único **por eixos**, sem separar vazio de carregado.
+- Logo, **a diferença real do Actros do dono é desconhecida** e tem que ser **medida**.
+
+**Quanto isso pesa no preço** (carregado 600 km a 2,0 km/L, diesel R$ 6,79, frete R$ 10.060; erro se o app usasse o rendimento do carregado também para o vazio):
+
+| Km vazios | Se o vazio rende 10% mais | 25% mais | 40% mais |
+|---|---|---|---|
+| 120 | R$ 37 (0,4 ponto) | R$ 81 (0,8) | R$ 116 (1,2) |
+| 600 | R$ 185 (1,8) | R$ 407 (**4,0**) | R$ 582 (**5,8**) |
+| 1.200 | R$ 370 (3,7) | R$ 815 (**8,1**) | R$ 1.164 (**11,6**) |
+
+Conclusão: **separar o rendimento vazio do carregado compensa quando o trecho vazio é longo** (de 600 km em diante). Com 120 km vazios, o erro é menor que 1,2 ponto.
+
+**O combustível não é a única razão.** Em 600 km vazios, a 2,5 km/L, o diesel é R$ 1.629,60 e o custo do caminhão (R$ 2,00/km) é R$ 1.200,00. O diesel é 58% do custo do trecho vazio. Os outros 42% (pneus, manutenção, e o custo fixo por tempo) continuam correndo. É por isso que saber só o rendimento não basta: o **km vazio** e o **custo por km** pesam tanto quanto.
+
+**Como medir o rendimento vazio e carregado:** abastecer com tanque cheio no início de um trecho carregado e de novo no fim (litros ÷ km), e repetir em um trecho vazio. Duas medidas já mostram a diferença.
+
+### D. O que ainda não sei e depende de você
+
+1. **Quantos eixos** tem o conjunto do dono (cavalo 6x4 com carreta de 3 eixos = 6; bitrem = 7; rodotrem = 9)?
+2. **Quem é o dono, fiscalmente?** (autônomo pessoa física, MEI ou empresa) e **quem paga o frete** (empresa ou pessoa física)?
+3. **O recibo da transportadora traz INSS e SEST/SENAT?** Qual o valor em um frete real?
+4. **O contrato diz qual é a distância do retorno vazio** e quem paga o pedágio nele?
+
 ## Fontes
 
 Oficiais:
 - [Perguntas frequentes do Vale-Pedágio Obrigatório, ANTT](https://www.gov.br/antt/pt-br/assuntos/cargas/vale-pedagio-obrigatorio/perguntas-frequentes-vpo)
 - [7.1. Como é estruturada a metodologia do piso mínimo, ANTT](https://www.gov.br/antt/pt-br/assuntos/cargas/politica-nacional-de-pisos-minimos-de-frete/perguntas-frequentes-pmf/7-metodologia-de-calculo-2014-custos-fixos-variaveis-insumos-de-referencia-e-itens-nao-previstos/7-1-como-e-estruturada-a)
 - [7.7. O piso contempla todos os custos?, ANTT](https://www.gov.br/antt/pt-br/assuntos/cargas/politica-nacional-de-pisos-minimos-de-frete/perguntas-frequentes-pmf/7-metodologia-de-calculo-2014-custos-fixos-variaveis-insumos-de-referencia-e-itens-nao-previstos/7-7-o-piso-minimo-de)
-- [Relatório técnico 2, ESALQ-LOG/USP para a ANTT (seção 2.2.2, custo de ARLA)](https://www.gov.br/antt/pt-br/assuntos/cargas/arquivos/arquivos-politica-nacional-de-pisos-minimos-de-frete/arquivos-etapas-de-implementacao-da-pnpm-trc/relatorio-tecnico-2-fealq-esalq-log-usp.pdf)
+- [Relatório técnico 2, ESALQ-LOG/USP para a ANTT (seção 2.2.1, rendimento por eixos, e 2.2.2, custo de ARLA)](https://www.gov.br/antt/pt-br/assuntos/cargas/arquivos/arquivos-politica-nacional-de-pisos-minimos-de-frete/arquivos-etapas-de-implementacao-da-pnpm-trc/relatorio-tecnico-2-fealq-esalq-log-usp.pdf)
+
+- [Contribuição ao SEST SENAT, cartilha oficial](https://publicador.sestsenat.org.br/arquivos/b57a2c22-eefa-48a6-85fb-91f99a1b15ae.pdf) e [como funciona a contribuição](https://www.sestsenat.org.br/contribuicao)
+- [Rendimentos tributáveis (carnê-leão), Receita Federal](https://www.gov.br/receitafederal/pt-br/assuntos/meu-imposto-de-renda/pagamento/carne-leao/rendimentos/)
+- [Contribuições previdenciárias de pessoas físicas, Receita Federal](https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/tributos/contribuicoes-previdenciarias-pf)
+- [Retenção sobre nota fiscal, PGFN](https://www.gov.br/pgfn/pt-br/cidadania-tributaria/por-assunto/tributacao-sobre-a-folhas-de-salarios-e-outras/contribuicoes-previdenciarias-1/retencao-sobre-nota-fiscal)
 
 Do setor (usar como pista):
+- [Isenção de pedágio para eixos suspensos (Lei 13.711/2018), COAD](https://www.coad.com.br/home/noticias-detalhe/88662/publicada-lei-sobre-isencao-de-pedagio-para-caminhoes-com-eixos-suspensos)
+- [Economia com isenção de eixo suspenso pode passar de 30%, SETCESP](https://setcesp.org.br/noticias/economia-com-isencao-de-eixo-suspenso-pode-passar-de-30/)
+- [A fase P7 do Proconve e o impacto no setor de transporte, ITL](https://repositorio.itl.org.br/jspui/bitstream/123456789/167/1/A%20Fase%20P7%20do%20Proconve%20e%20o%20Impacto%20no%20Setor%20de%20Transporte.pdf)
+- [Resolução ANTT 5.867/2020, texto](https://www.normasbrasil.com.br/norma/resolucao-5867-2020_388856.html) e [frete de retorno em nova resolução, Ministério dos Transportes](https://www.gov.br/transportes/pt-br/assuntos/noticias/ultimas-noticias/frete-de-retorno-e-previsto-em-nova-resolucao-da-antt)
+- [MEI Caminhoneiro: limite e funcionamento em 2026, Contmatic](https://simplifique.contmatic.com.br/blogs/mei-caminhoneiro-limite-2025)
 - [Vale-pedágio obrigatório 2026, Contmatic](https://simplifique.contmatic.com.br/blogs/vale-pedagio-obrigatorio-saiba-agora-como-funciona)
 - [Vale-pedágio: quem paga e como provar, Brudam](https://brudam.com.br/vale-pedagio-obrigatorio/)
 - [Vale-pedágio obrigatório: quem paga e o que diz a lei, Zapay](https://blog.usezapay.com.br/transito/vale-pedagio-obrigatorio)

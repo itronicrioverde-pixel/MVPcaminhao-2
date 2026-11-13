@@ -151,7 +151,9 @@ A ordem é a que mais reduz erro por unidade de trabalho e a que menos mexe em d
 | Quem define a margem? | **O dono** | O campo começa vazio, sem número pronto |
 | Custo fixo por dia | **Só depois de o dono usar o app e alimentá-lo** | Em branco não trava mais a análise: aparece um aviso de que ele não entrou na conta. No modo rápido o "custo por km, tudo incluso" já cobre o fixo |
 
-Suposição ainda a confirmar: os 80% são sobre o **frete bruto**, antes de descontos.
+Confirmado pelo dono: os 80% são sobre o **frete total (bruto)**, não sobre o líquido.
+
+Também confirmado: quando o dono paga o pedágio, o contratante **não reembolsa**; isso é combinado antes de aceitar o frete, então o frete precisa cobri-lo. E o contrato do dono **obriga o caminhão a rodar vazio**, por isso o rendimento vazio e carregado importa (ver `pesquisa-vale-pedagio-frete-arla.md`, parte 2).
 
 **Plano para o custo fixo por dia.** Quando o dono tiver lançado as despesas fixas (parcela, seguro, IPVA, rastreador) e as viagens com a duração real, o app calcula o custo fixo por dia sozinho e passa a sugerir o valor. Até lá, vale o aviso e o modo rápido.
 
