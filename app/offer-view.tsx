@@ -5,8 +5,8 @@ import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-re
 import { Input } from "@/components/ui/input";
 import { ApiError, httpApi } from "@/lib/api-client";
 import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, planFuelSync, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
-import { analyzeOffer, costPerKmFromYear, type Decision, type OfferResult } from "@/lib/offer";
-import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, parseKm, parseLiters, parseMoney, type OfferForm } from "@/lib/offer-form";
+import { analyzeOffer, costPerKmFromYear, type Decision, type ExpenseBasis, type OfferResult } from "@/lib/offer";
+import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, MAX_EXPENSE_ROWS, parseKm, parseLiters, parseMoney, type ExpenseRow, type OfferForm } from "@/lib/offer-form";
 
 // Só o que é do caminhão e do jeito de trabalhar fica guardado neste aparelho.
 // O que é da oferta (frete, quilômetros, pedágio, duração) começa vazio a cada análise.
@@ -182,6 +182,129 @@ function Row({ label, detail, value, strong }: { label: string; detail?: string;
     <div className={`flex items-baseline justify-between gap-3 py-2 ${strong ? "border-t border-black/10 pt-3 font-bold" : ""}`}>
       <div className="min-w-0"><span>{label}</span>{detail ? <span className="block text-xs font-normal text-[#718078]">{detail}</span> : null}</div>
       <span className="shrink-0 tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+/** Despesas de uso comum: um toque cria a linha com o nome e a forma de cobrança mais provável. */
+const EXPENSE_PRESETS: { label: string; basis: ExpenseBasis; payer: "me" | "contractor"; detailedOnly?: boolean }[] = [
+  { label: "Estadia (espera)", basis: "trip", payer: "me" },
+  { label: "Chapa / descarga", basis: "trip", payer: "me" },
+  { label: "Multa", basis: "trip", payer: "me" },
+  { label: "Lavagem", basis: "trip", payer: "me" },
+  { label: "Balsa", basis: "trip", payer: "me" },
+  { label: "Balança", basis: "trip", payer: "me" },
+  { label: "Alimentação", basis: "trip", payer: "me" },
+  { label: "Estacionamento", basis: "trip", payer: "me" },
+  { label: "Seguro da carga", basis: "percent", payer: "me" },
+  { label: "Diária do ajudante", basis: "day", payer: "me", detailedOnly: true },
+  { label: "Desconto de avaria", basis: "trip", payer: "contractor" },
+];
+
+const BASIS_OPTIONS: { value: ExpenseBasis; label: string; hint: string }[] = [
+  { value: "trip", label: "Valor da viagem (R$)", hint: "R$" },
+  { value: "day", label: "Por dia (R$/dia)", hint: "R$/dia" },
+  { value: "km", label: "Por km (R$/km)", hint: "R$/km" },
+  { value: "percent", label: "% do frete", hint: "%" },
+];
+
+function newRow(patch: Partial<ExpenseRow> = {}): ExpenseRow {
+  return { id: `despesa-${crypto.randomUUID()}`, label: "", amount: "", basis: "trip", payer: "me", ...patch };
+}
+
+function ExpensesEditor({ rows, errors, quick, onChange }: {
+  rows: ExpenseRow[]; errors: Record<string, string>; quick: boolean; onChange: (rows: ExpenseRow[]) => void;
+}) {
+  const update = (id: string, patch: Partial<ExpenseRow>) => onChange(rows.map((row) => {
+    if (row.id !== id) return row;
+    const next = { ...row, ...patch };
+    // desconto do contratante é sempre um valor em reais: percentual não vale
+    if (next.payer === "contractor" && next.basis === "percent") next.basis = "trip";
+    return next;
+  }));
+  const full = rows.length >= MAX_EXPENSE_ROWS;
+  return (
+    <div className="sm:col-span-2 space-y-3">
+      <p className="text-sm text-[#34443e]">Tem alguma despesa que não está nos campos acima? Adicione aqui. Ela entra na conta e aparece no passo a passo do resultado.</p>
+      <div className="flex flex-wrap gap-2">
+        {EXPENSE_PRESETS.filter((preset) => !(quick && preset.detailedOnly)).map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            disabled={full}
+            aria-label={`Adicionar ${preset.label}`}
+            onClick={() => onChange([...rows, newRow({ label: preset.label, basis: preset.basis, payer: preset.payer })])}
+            className="min-h-11 rounded-full border border-black/10 bg-[#f3f6f4] px-4 text-sm font-semibold text-[#10251f] disabled:opacity-50"
+          >
+            + {preset.label}
+          </button>
+        ))}
+      </div>
+      {rows.map((row, index) => {
+        const n = index + 1;
+        const error = errors[row.id];
+        const unit = BASIS_OPTIONS.find((option) => option.value === row.basis)?.hint ?? "";
+        return (
+          <div key={row.id} className="rounded-xl bg-[#f3f6f4] p-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor={`${row.id}-label`} className="text-sm font-semibold text-[#34443e]">Nome da despesa {n}</label>
+                <Input id={`${row.id}-label`} value={row.label} maxLength={60} autoComplete="off" onChange={(event) => update(row.id, { label: event.target.value })} className="mt-1 h-12 rounded-xl bg-white text-base" />
+              </div>
+              <div>
+                <label htmlFor={`${row.id}-amount`} className="text-sm font-semibold text-[#34443e]">Valor da despesa {n} ({unit})</label>
+                <Input
+                  id={`${row.id}-amount`}
+                  value={row.amount}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  aria-invalid={error ? true : undefined}
+                  onChange={(event) => update(row.id, { amount: event.target.value })}
+                  className={`mt-1 h-12 rounded-xl bg-white text-base ${error ? "border-red-500" : ""}`}
+                />
+              </div>
+              <div>
+                <label htmlFor={`${row.id}-basis`} className="text-sm font-semibold text-[#34443e]">Como cobra a despesa {n}</label>
+                <select id={`${row.id}-basis`} value={row.basis} onChange={(event) => update(row.id, { basis: event.target.value as ExpenseBasis })} className="mt-1 h-12 w-full rounded-xl border border-input bg-white px-3 text-base">
+                  {BASIS_OPTIONS.filter((option) => !(quick && option.value === "day")).map((option) => (
+                    <option key={option.value} value={option.value} disabled={option.value === "percent" && row.payer === "contractor"}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor={`${row.id}-payer`} className="text-sm font-semibold text-[#34443e]">Quem arca com a despesa {n}</label>
+                <select id={`${row.id}-payer`} value={row.payer} onChange={(event) => update(row.id, { payer: event.target.value as "me" | "contractor" })} className="mt-1 h-12 w-full rounded-xl border border-input bg-white px-3 text-base">
+                  <option value="me">Sai do meu bolso</option>
+                  <option value="contractor">O contratante desconta do frete</option>
+                </select>
+              </div>
+            </div>
+            {error ? <p role="alert" className="mt-2 text-sm text-red-700">{error}</p> : null}
+            <button
+              type="button"
+              aria-label={`Remover despesa ${n}`}
+              onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+              className="mt-2 min-h-11 rounded-lg px-3 text-sm font-bold text-red-700"
+            >
+              Remover
+            </button>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        disabled={full}
+        onClick={() => onChange([...rows, newRow()])}
+        className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white disabled:opacity-50"
+      >
+        Adicionar outra despesa
+      </button>
+      <HelpNote title="Qual a diferença entre despesa minha e desconto?">
+        <p><b>Sai do meu bolso:</b> você paga e o lucro diminui. Exemplo: chapa para descarregar, multa, lavagem.</p>
+        <p><b>O contratante desconta do frete:</b> ele paga menos do que o combinado. Exemplo: desconto por avaria na carga. Isso também diminui a base da comissão, se ela for sobre o frete líquido.</p>
+        <p><b>Cuidado para não contar duas vezes:</b> parcela, seguro, IPVA e manutenção já estão no custo do caminhão. A diária do motorista já pode estar na comissão. Só lance aqui o que ainda não foi contado.</p>
+        <p><b>Por dia</b> usa a duração da viagem (modo detalhado). <b>Por km</b> usa todos os km rodados, vazio e carregado. <b>% do frete</b> acompanha o valor do frete, como o seguro da carga.</p>
+      </HelpNote>
     </div>
   );
 }
@@ -578,7 +701,6 @@ export function OfferView() {
                 <p><b>Ainda não sabe?</b> Deixe em branco: o app avisa que o custo fixo não entrou na conta e não trava a análise. Com o uso, o dono passa a ter esse número. No modo rápido, o custo por km já inclui o fixo.</p>
                 <p><b>Como achar o valor por dia:</b> some o que paga por mês e divida pelos dias do mês em que o caminhão trabalha, por exemplo 25. Dividir por 30 deixa o custo por dia menor que o real.</p>
               </HelpNote>
-              <NumField field="extras" label="Outros custos (R$)" value={form.extras} onChange={set("extras")} error={built.errors.extras} hint="Alimentação, chapa, estacionamento…" />
               <div className="sm:col-span-2">
               <CheckField label="Meu caminhão usa ARLA 32" checked={form.arlaUse} onChange={set("arlaUse")} />
               {form.arlaUse ? (
@@ -590,6 +712,10 @@ export function OfferView() {
               </div>
               </>
             )}
+          </Card>
+
+          <Card title="Outras despesas">
+            <ExpensesEditor rows={form.expenses} errors={built.expenseErrors} quick={quick} onChange={set("expenses")} />
           </Card>
 
           {quick ? (
@@ -837,7 +963,16 @@ export function OfferView() {
                       value={result.fixedCostCents === null ? "não calculado" : `− ${formatBRL(result.fixedCostCents)}`}
                     />
                   ) : null}
-                  {input.extraCostsCents > 0 ? <Row label="Outros custos" value={`− ${formatBRL(input.extraCostsCents)}`} /> : null}
+                  {result.expenseLines.map((line, index) => {
+                    const source = input.expenses?.[index];
+                    const detail = line.payer === "contractor"
+                      ? "descontado pelo contratante"
+                      : source?.basis === "percent" ? `${formatBp(source.amount)} do frete`
+                      : source?.basis === "day" ? `${formatBRL(source.amount)} por dia`
+                      : source?.basis === "km" ? `${result.totalKm} km × ${formatBRL(source.amount)}`
+                      : undefined;
+                    return <Row key={index} label={line.label} detail={detail} value={line.cents === null ? "não calculado" : `− ${formatBRL(line.cents)}`} />;
+                  })}
                   {input.deductionsCents > 0 ? <Row label="Descontos" value={`− ${formatBRL(input.deductionsCents)}`} /> : null}
                   {input.commissionBp > 0 ? <Row label={`Comissão (${formatBp(input.commissionBp)})`} value={`− ${formatBRL(result.commissionCents)}`} /> : null}
                   {input.otherPercentBp > 0 ? <Row label={`Outros percentuais (${formatBp(input.otherPercentBp)})`} value={`− ${formatBRL(result.otherPercentCents)}`} /> : null}

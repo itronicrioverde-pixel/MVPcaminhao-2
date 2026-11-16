@@ -176,3 +176,21 @@ Também confirmado: quando o dono paga o pedágio, o contratante **não reembols
 2. **Como publicar.** O código está na branch `claude/eager-heisenberg-4r4fsn`. Para ir ao ar, precisa entrar na `main` e ser publicado pelo fluxo do dono.
 3. **Login:** e-mail e senha, conta Google, ou manter o "Entrar com ChatGPT"? Só importa quando entrar o motorista.
 4. **Perguntas que ainda faltam:** o contratante costuma dar vale-pedágio? A comissão é sobre o frete bruto? O caminhão usa ARLA 32?
+
+## Outras despesas (lista com nome)
+
+O dono pode ter uma despesa que não está nos campos do app e que no fim sai do frete. Em vez de um número único e sem nome ("Outros custos"), a tela tem uma lista de **Outras despesas**, nos dois modos. Cada linha tem:
+
+- **nome** (um toque cria as mais comuns: estadia, chapa, multa, lavagem, balsa, balança, alimentação, estacionamento, seguro da carga, diária do ajudante, desconto de avaria);
+- **como cobra:** valor da viagem, por dia (só no modo detalhado, que tem a duração), por km rodado ou percentual do frete;
+- **quem arca:** sai do bolso do dono (custo) ou o contratante desconta do frete (reduz o frete recebido e a base da comissão sobre o líquido).
+
+Regras do cálculo:
+
+- Percentual do frete acompanha o preço, então entra corretamente no frete de empate e no de meta. Arredondamento acumulado: as linhas somam exatamente o total.
+- Por dia sem a duração da viagem vira **pendência**, nunca zero escondido.
+- Despesa sua em valor, dia ou km entra no pior caso (os 10%) e no caixa até descarregar. Percentual e desconto do contratante não entram no caixa.
+- Desconto do contratante só aceita valor em reais, não percentual.
+- Cada linha aparece no "Como chegamos nesse resultado". Há uma explicação curta sobre a diferença entre despesa e desconto e sobre não contar duas vezes (parcela, seguro e manutenção já estão no custo por km; a diária do motorista pode já estar na comissão).
+
+Não feito, de propósito: estadia **recebida** (o contratante paga a espera) como receita a mais, e memória dos nomes de despesa usados antes.

@@ -1,4 +1,4 @@
-import type { FreightPayer, Leg, OfferInput, TaxProfile } from "./offer";
+import type { ExpenseBasis, ExpenseLine, ExpensePayer, FreightPayer, Leg, OfferInput, TaxProfile } from "./offer";
 
 // Leitura dos números como o motorista digita, em português: "6,79", "50.300", "R$ 10.060,00".
 // Campo vazio é "desconhecido" (value null), nunca zero. Formato ambíguo é recusado, não adivinhado.
@@ -78,6 +78,11 @@ export function parseBalanceDays(text: string): Parsed {
   return parsed;
 }
 
+/** Linha de "Outras despesas": o valor é texto como o dono digita; o significado depende da forma de cobrança. */
+export type ExpenseRow = { id: string; label: string; amount: string; basis: ExpenseBasis; payer: ExpensePayer };
+export const MAX_EXPENSE_ROWS = 50;
+const MAX_EXPENSE_LABEL = 60;
+
 export type OfferForm = {
   /** "quick": poucos números, consumo médio e custo por km que já inclui tudo. "detailed": todos os campos. */
   mode: "quick" | "detailed";
@@ -110,7 +115,8 @@ export type OfferForm = {
   /** Modo rápido: custo por km que já inclui parcela, seguro, IPVA, pneus e manutenção. */
   vehicleKmAll: string;
   fixedDay: string;
-  extras: string;
+  /** Despesas avulsas com nome, por viagem, dia, km ou % do frete. */
+  expenses: ExpenseRow[];
   commission: string;
   margin: string;
   commissionBase: "gross" | "net";
@@ -134,7 +140,7 @@ export function emptyOfferForm(): OfferForm {
     countRetentions: false,
     freightMode: "fixed", freight: "", rate: "", weightKg: "",
     kmEmptyTo: "", kmLoaded: "", kmEmptyBack: "", kplEmpty: "", kplLoaded: "", kplAvg: "", diesel: "",
-    toll: "", noToll: false, tollPayer: "me", arlaUse: false, arlaPct: "", arlaPrice: "", vehicleKm: "", vehicleKmAll: "", fixedDay: "", extras: "",
+    toll: "", noToll: false, tollPayer: "me", arlaUse: false, arlaPct: "", arlaPrice: "", vehicleKm: "", vehicleKmAll: "", fixedDay: "", expenses: [],
     commission: "", margin: "", commissionBase: "gross", discounts: "", otherPct: "", days: "",
     ccd: "", cc: "", advance: "80", balanceDays: "0", moneyCost: "", safety: "",
   };
@@ -143,6 +149,8 @@ export function emptyOfferForm(): OfferForm {
 export type BuiltOffer = {
   input: OfferInput | null;
   errors: Partial<Record<keyof OfferForm, string>>;
+  /** Erro de cada linha de despesa, pelo id da linha. */
+  expenseErrors: Record<string, string>;
   /** Sem margem alvo informada o motor considera 0%: só avisa se há prejuízo. */
   marginMissing: boolean;
 };
@@ -176,7 +184,6 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
   const fixedDay = detailed ? read("fixedDay", parseMoney) : 0;
   const arlaPct = detailed && form.arlaUse ? read("arlaPct", parsePercent) : null;
   const arlaPrice = detailed && form.arlaUse ? read("arlaPrice", parsePricePerLiter) : null;
-  const extras = detailed ? read("extras", parseMoney) : 0;
   const commission = read("commission", parsePercent);
   const margin = read("margin", parsePercent);
   const discounts = detailed ? read("discounts", parseMoney) : 0;
@@ -194,7 +201,37 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
   const moneyCost = detailed ? read("moneyCost", parsePercent) : null;
   const safety = detailed ? read("safety", parsePercent) : null;
 
-  if (Object.keys(errors).length > 0) return { input: null, errors, marginMissing: margin === null };
+  const expenseErrors: Record<string, string> = {};
+  const expenses: ExpenseLine[] = [];
+  form.expenses.forEach((row, index) => {
+    const label = row.label.trim();
+    const blank = label === "" && row.amount.trim() === "";
+    if (blank) return;
+    if (index >= MAX_EXPENSE_ROWS) {
+      expenseErrors[row.id] = `No máximo ${MAX_EXPENSE_ROWS} despesas.`;
+      return;
+    }
+    if (row.amount.trim() === "") {
+      expenseErrors[row.id] = "Informe o valor ou apague a linha.";
+      return;
+    }
+    if (row.basis === "day" && quick) {
+      expenseErrors[row.id] = "\"Por dia\" só funciona no modo detalhado, que tem a duração da viagem.";
+      return;
+    }
+    if (row.basis === "percent" && row.payer === "contractor") {
+      expenseErrors[row.id] = "Desconto do contratante é um valor em reais, não um percentual.";
+      return;
+    }
+    const parsed = row.basis === "percent" ? parsePercent(row.amount) : parseMoney(row.amount);
+    if (parsed.error || parsed.value === null) {
+      expenseErrors[row.id] = parsed.error ?? NOT_A_NUMBER;
+      return;
+    }
+    expenses.push({ label: (label || "Despesa sem nome").slice(0, MAX_EXPENSE_LABEL), basis: row.basis, amount: parsed.value, payer: row.payer });
+  });
+
+  if (Object.keys(errors).length > 0 || Object.keys(expenseErrors).length > 0) return { input: null, errors, expenseErrors, marginMissing: margin === null };
 
   const legs: Leg[] = quick
     ? [
@@ -216,7 +253,8 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
     tollPayer: form.tollPayer,
     tollCents: toll,
     arla: detailed && form.arlaUse ? { percentOfDieselBp: arlaPct, priceMilli: arlaPrice } : null,
-    extraCostsCents: extras ?? 0,
+    extraCostsCents: 0,
+    expenses,
     vehicleCostCentsPerKm: vehicleKm,
     fixedCostPerDayCents: fixedDay,
     deductionsCents: discounts ?? 0,
@@ -232,7 +270,7 @@ export function buildOfferInput(form: OfferForm): BuiltOffer {
     safetyBp: quick ? DEFAULT_SAFETY_BP : (safety ?? DEFAULT_SAFETY_BP),
     retention: { profile: form.profile, payer: form.payer, count: form.countRetentions },
   };
-  return { input, errors, marginMissing: margin === null };
+  return { input, errors, expenseErrors, marginMissing: margin === null };
 }
 
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });

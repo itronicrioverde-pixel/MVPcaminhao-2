@@ -192,5 +192,31 @@ try{
   assert.equal(f.formatBp(4884),'48,84%');assert.equal(f.formatBp(-1000),'-10,00%');assert.equal(f.formatBp(null),'—');
   assert.equal(nb(f.formatLiters(340000)),'340 L');assert.equal(nb(f.formatLiters(340500)),'340,5 L');assert.equal(f.formatLiters(null),'—');
 
+  // outras despesas: linhas com nome, valor, forma de cobrança e quem arca
+  const row=(over={})=>({id:'r1',label:'Chapa',amount:'380',basis:'trip',payer:'me',...over});
+  const det=f.buildOfferInput({...f.emptyOfferForm(),mode:'detailed',freight:'10.060',kmEmptyTo:'120',kmLoaded:'600',kplEmpty:'3',kplLoaded:'2',diesel:'6,79',toll:'450',vehicleKm:'1,50',fixedDay:'0',commission:'13',margin:'20',days:'3'});
+  assert.deepEqual(f.emptyOfferForm().expenses,[],'começa sem despesas avulsas');assert.equal('extras' in f.emptyOfferForm(),false,'o campo único antigo saiu');
+  assert.deepEqual(det.input.expenses,[]);assert.equal(det.input.extraCostsCents,0);assert.deepEqual(det.expenseErrors,{});
+  const withRows=(rows,over={})=>f.buildOfferInput({...f.emptyOfferForm(),mode:'detailed',freight:'10.060',kmEmptyTo:'120',kmLoaded:'600',kplEmpty:'3',kplLoaded:'2',diesel:'6,79',toll:'450',vehicleKm:'1,50',fixedDay:'0',commission:'13',margin:'20',days:'3',...over,expenses:rows});
+  assert.deepEqual(withRows([row()]).input.expenses,[{label:'Chapa',basis:'trip',amount:38000,payer:'me'}],'R$ 380 vira 38.000 centavos');
+  assert.deepEqual(withRows([row({id:'a',label:'Lavagem',amount:'0,05',basis:'km'}),row({id:'b',label:'Diária',amount:'200',basis:'day'}),row({id:'c',label:'Seguro',amount:'2',basis:'percent'}),row({id:'d',label:'Avaria',amount:'100',payer:'contractor'})]).input.expenses.map(e=>[e.basis,e.amount,e.payer]),[['km',5,'me'],['day',20000,'me'],['percent',200,'me'],['trip',10000,'contractor']]);
+  assert.deepEqual(withRows([row({id:'x',label:'',amount:''}),row({id:'y',label:'  ',amount:' '})]).input.expenses,[],'linha em branco é ignorada');
+  assert.equal(withRows([row({label:'',amount:'50'})]).input.expenses[0].label,'Despesa sem nome');
+  assert.equal(withRows([row({label:'  Chapa  '})]).input.expenses[0].label,'Chapa','tira espaços das pontas');
+  assert.equal(withRows([row({label:'x'.repeat(80)})]).input.expenses[0].label.length,60,'nome longo é cortado');
+  for(const [r,why] of [[row({amount:'abc'}),'valor inválido'],[row({amount:''}),'nome sem valor'],[row({basis:'percent',amount:'150'}),'percentual acima de 100%'],[row({basis:'percent',payer:'contractor',amount:'2'}),'desconto em percentual'],[row({basis:'km',amount:'0,005'}),'meio centavo por km']]){
+    const b=withRows([r]);assert.equal(b.input,null,why);assert.equal(typeof b.expenseErrors.r1,'string',why);assert.ok(b.expenseErrors.r1.length>5);
+  }
+  assert.deepEqual(Object.keys(withRows([row({id:'ok'}),row({id:'ruim',amount:'x'})]).expenseErrors),['ruim'],'o erro aponta a linha certa');
+  // modo rápido: despesas valem, mas "por dia" precisa da duração, que só existe no detalhado
+  const quickRows=(rows)=>f.buildOfferInput({...f.emptyOfferForm(),mode:'quick',freight:'10.060',kmEmptyTo:'120',kmLoaded:'600',kplAvg:'2,12',diesel:'6,79',toll:'450',vehicleKmAll:'1,50',commission:'13',margin:'20',expenses:rows});
+  assert.equal(quickRows([row()]).input.expenses.length,1,'no modo rápido a despesa conta');
+  assert.equal(quickRows([row({basis:'day'})]).input,null);assert.ok(quickRows([row({basis:'day'})]).expenseErrors.r1.includes('detalhado'));
+  assert.equal(quickRows([row({basis:'km',amount:'0,05'}),row({id:'p',basis:'percent',amount:'1'})]).input.expenses.length,2);
+  assert.equal(withRows(Array.from({length:51},(_,i)=>row({id:'n'+i}))).input,null,'no máximo 50 linhas');
+  // ponta a ponta: o mesmo resultado que o motor dá com as linhas
+  const e2e=offer.analyzeOffer(withRows([row(),row({id:'a',label:'Seguro',amount:'2',basis:'percent'})]).input);
+  assert.equal(e2e.resultCents,491360-38000-20120);assert.deepEqual(e2e.expenseLines.map(l=>[l.label,l.cents]),[['Chapa',38000],['Seguro',20120]]);
+
   console.log('PASS: leitura de números em português (dinheiro, litro, consumo, percentual, km, kg, horas), vazio como desconhecido, recusa de formatos ambíguos, montagem da entrada do motor, "sem pedágio" x não conferido, erros por campo e formatação.');
 }finally{await rm(temp,{recursive:true,force:true});}

@@ -12,7 +12,7 @@ function isMobile(page: Page) {
 
 async function openOffer(page: Page, mode: "quick" | "detailed" = "detailed", opts: { keepFuel?: boolean } = {}) {
   // as medições agora ficam no banco, que dura entre os testes: cada teste começa sem nenhuma
-  if (!opts.keepFuel) expect((await page.request.delete("/api/fuel?all=true")).ok()).toBe(true);
+  if (!opts.keepFuel) { const reset = await page.request.delete("/api/fuel?all=true"); expect(reset.status(), await reset.text()).toBe(200); }
   await page.goto("/");
   const nav = isMobile(page)
     ? page.getByRole("navigation", { name: "Navegação mobile" })
@@ -815,6 +815,109 @@ test("medir consumo: se não deu para apagar no banco, o abastecimento continua 
   await page.getByRole("button", { name: "Remover abastecimento 1", exact: true }).click();
   await expect(page.getByText("Não consegui apagar agora")).toBeVisible();
   await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(1);
+});
+
+// ---------- outras despesas ----------
+// Caso do documento no modo detalhado, frete fixo de R$ 10.060: resultado R$ 4.913,60 sem nenhuma despesa extra.
+
+async function openExpenses(page: Page, mode: "quick" | "detailed" = "detailed") {
+  await openOffer(page, mode);
+  if (mode === "detailed") {
+    await fillTrip(page);
+    await fill(page, "Valor do frete (R$)", "10.060");
+  } else {
+    await fillQuick(page);
+  }
+}
+
+const addChip = (page: Page, name: string) => page.getByRole("button", { name: `Adicionar ${name}`, exact: true }).click();
+
+test("outras despesas: um toque cria a linha com o nome e o valor entra na conta", async ({ page }) => {
+  await openExpenses(page);
+  await expect(result(page)).toContainText("R$ 4.913,60");
+  await addChip(page, "Chapa / descarga");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("380");
+  const card = result(page);
+  await expect(card).toContainText("R$ 4.533,60");
+  await expect(card).toContainText("Chapa / descarga");
+  await expect(card).toContainText("− R$ 380,00");
+  await expect(page.getByLabel("Nome da despesa 1", { exact: true })).toHaveValue("Chapa / descarga");
+});
+
+test("outras despesas: por km, por dia e percentual do frete, cada um com a sua conta", async ({ page }) => {
+  await openExpenses(page);
+  await fill(page, "Duração prevista (dias)", "3");
+  await addChip(page, "Seguro da carga");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("2");
+  await expect(page.getByLabel("Como cobra a despesa 1", { exact: true })).toHaveValue("percent");
+  await expect(result(page)).toContainText("R$ 4.712,40");
+  await expect(result(page)).toContainText("2,00% do frete");
+
+  await page.getByRole("button", { name: "Adicionar outra despesa", exact: true }).click();
+  await page.getByLabel("Nome da despesa 2", { exact: true }).fill("Diária do ajudante");
+  await page.getByLabel("Como cobra a despesa 2", { exact: true }).selectOption("day");
+  await page.getByLabel(/^Valor da despesa 2 /).fill("200");
+  await expect(result(page)).toContainText("R$ 4.112,40");
+  await expect(result(page)).toContainText("Diária do ajudante");
+
+  await page.getByRole("button", { name: "Adicionar outra despesa", exact: true }).click();
+  await page.getByLabel("Como cobra a despesa 3", { exact: true }).selectOption("km");
+  await page.getByLabel(/^Valor da despesa 3 /).fill("0,05");
+  await expect(result(page)).toContainText("R$ 4.076,40");
+  await expect(result(page)).toContainText("Despesa sem nome");
+});
+
+test("outras despesas: o contratante que desconta do frete não é custo seu", async ({ page }) => {
+  await openExpenses(page);
+  await addChip(page, "Desconto de avaria");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("100");
+  await page.getByLabel("Quem arca com a despesa 1", { exact: true }).selectOption("contractor");
+  const card = result(page);
+  await expect(card).toContainText("R$ 4.813,60");
+  await expect(card).toContainText("descontado pelo contratante");
+  await expect(page.getByLabel("Como cobra a despesa 1", { exact: true }).locator("option[value=percent]")).toBeDisabled();
+});
+
+test("outras despesas: valor errado é apontado na linha e remover a linha tira da conta", async ({ page }) => {
+  await openExpenses(page);
+  await addChip(page, "Multa");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("abc");
+  await expect(page.getByText("Use só números").first()).toBeVisible();
+  await expect(result(page)).not.toContainText("R$ 4.913,60");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("500");
+  await expect(result(page)).toContainText("R$ 4.413,60");
+  await page.getByRole("button", { name: "Remover despesa 1", exact: true }).click();
+  await expect(page.getByLabel(/^Valor da despesa 1 /)).toHaveCount(0);
+  await expect(result(page)).toContainText("R$ 4.913,60");
+});
+
+test("outras despesas: no modo rápido também, mas sem a opção por dia", async ({ page }) => {
+  await openExpenses(page, "quick");
+  await expect(result(page)).toContainText("R$ 4.556,16");
+  await addChip(page, "Lavagem");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("150");
+  await expect(result(page)).toContainText("R$ 4.406,16");
+  await expect(page.getByLabel("Como cobra a despesa 1", { exact: true }).locator("option[value=day]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Adicionar Diária do ajudante", exact: true })).toHaveCount(0);
+});
+
+test("outras despesas: explica a diferença entre despesa sua e desconto do contratante", async ({ page }) => {
+  await openExpenses(page);
+  await page.getByText("Qual a diferença entre despesa minha e desconto?", { exact: true }).click();
+  await expect(page.getByText("contar duas vezes", { exact: false }).first()).toBeVisible();
+});
+
+test("outras despesas: o caixa até descarregar conta a despesa que sai do seu bolso", async ({ page }) => {
+  await openExpenses(page, "quick");
+  await fill(page, "Adiantamento (%)", "0");
+  await expect(result(page)).toContainText("Caixa que você precisa ter até descarregar");
+  await expect(result(page)).toContainText("R$ 2.756,04");
+  await addChip(page, "Chapa / descarga");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("380");
+  await expect(result(page)).toContainText("R$ 3.136,04");
+  // desconto do contratante não sai do seu caixa na estrada
+  await page.getByLabel("Quem arca com a despesa 1", { exact: true }).selectOption("contractor");
+  await expect(result(page)).toContainText("R$ 2.756,04");
 });
 
 // ---------- perfil fiscal e retenções estimadas ----------

@@ -32,6 +32,21 @@ export type FreightPayer = "empresa" | "pessoa_fisica";
 /** `count`: conta a retenção estimada no resultado. Desligado, ela só aparece como estimativa. */
 export type RetentionInput = { profile: TaxProfile; payer: FreightPayer; count: boolean };
 
+/** Como a despesa é cobrada: valor da viagem, por dia, por km rodado ou percentual do frete. */
+export type ExpenseBasis = "trip" | "day" | "km" | "percent";
+/** "me": a despesa é sua e sai do seu lucro. "contractor": o contratante desconta do frete. */
+export type ExpensePayer = "me" | "contractor";
+/**
+ * Despesa avulsa com nome. `amount`: centavos (viagem), centavos por dia, centavos por km ou pontos-base do frete (percentual).
+ * Desconto do contratante não aceita percentual: o valor é fixo na viagem.
+ */
+export type ExpenseLine = { label: string; basis: ExpenseBasis; amount: number; payer: ExpensePayer };
+/** `cents` é null quando falta dado para calcular (por dia sem a duração da viagem). */
+export type ExpenseLineResult = { label: string; basis: ExpenseBasis; payer: ExpensePayer; cents: number | null };
+
+const MAX_EXPENSE_LINES = 50;
+const MAX_EXPENSE_LABEL = 60;
+
 export type OfferInput = {
   freight: FreightInput;
   legs: Leg[];
@@ -41,6 +56,8 @@ export type OfferInput = {
   tollCents: number | null;
   arla: ArlaInput | null;
   extraCostsCents: number;
+  /** Despesas avulsas com nome, além do campo anônimo acima. */
+  expenses?: ExpenseLine[];
   /** Pneus, manutenção e similares por km rodado (vazio e carregado). null = não informado. */
   vehicleCostCentsPerKm: number | null;
   /** Parcela, seguro, IPVA, depreciação, rastreador, salário. null = ainda não informado (só avisa); 0 = não tem. */
@@ -115,6 +132,10 @@ export type OfferResult = {
   tollCostCents: number;
   vehicleCostCents: number | null;
   fixedCostCents: number | null;
+  /** Cada despesa avulsa, na ordem em que foi informada. */
+  expenseLines: ExpenseLineResult[];
+  /** Total que reduz o frete recebido: descontos informados mais as despesas descontadas pelo contratante. */
+  discountsCents: number;
   /** Soma só dos custos conhecidos (sem a comissão). */
   knownCostsCents: number;
   commissionCents: number;
@@ -174,7 +195,7 @@ const PENDING_MESSAGES: Record<PendingCode, string> = {
   PEDAGIO_NAO_CONFERIDO: "O pedágio ainda não foi conferido. Isso é diferente de não ter pedágio.",
   ARLA_INCOMPLETO: "Falta o consumo ou o preço do ARLA 32. Ele não entrou na conta.",
   CUSTO_KM_VEICULO_NAO_INFORMADO: "O custo por km do caminhão (pneus, manutenção) não foi informado.",
-  DURACAO_AUSENTE: "Falta a duração da viagem em dias. Sem ela o custo fixo não entrou na conta.",
+  DURACAO_AUSENTE: "Falta a duração da viagem em dias. Sem ela o custo fixo e as despesas por dia não entraram na conta.",
   PRAZO_AUSENTE: "Falta o prazo para receber o saldo. O custo de esperar o pagamento não entrou na conta.",
   CONFIG_INCOMPATIVEL: "Comissão, outros percentuais e margem alvo somam 100% ou mais. Não existe frete que cumpra a meta.",
 };
@@ -291,6 +312,16 @@ function validate(input: OfferInput) {
   if (input.fixedCostPerDayCents !== null) assertInt("custo fixo por dia", input.fixedCostPerDayCents);
   if (input.dieselPriceMilli !== null) assertInt("preço do diesel", input.dieselPriceMilli);
   assertInt("descontos", input.deductionsCents);
+  if (input.expenses !== undefined) {
+    if (!Array.isArray(input.expenses) || input.expenses.length > MAX_EXPENSE_LINES) throw new RangeError("lista de despesas inválida");
+    for (const line of input.expenses) {
+      if (typeof line?.label !== "string" || line.label.length > MAX_EXPENSE_LABEL) throw new RangeError("nome da despesa inválido");
+      if (!["trip", "day", "km", "percent"].includes(line.basis)) throw new RangeError("forma de cobrança da despesa inválida");
+      if (line.payer !== "me" && line.payer !== "contractor") throw new RangeError("quem arca com a despesa inválido");
+      assertInt("valor da despesa", line.amount, 0, line.basis === "percent" ? 10000 : Number.MAX_SAFE_INTEGER);
+      if (line.basis === "percent" && line.payer === "contractor") throw new RangeError("desconto do contratante não aceita percentual");
+    }
+  }
   assertInt("comissão", input.commissionBp);
   assertInt("outros percentuais", input.otherPercentBp);
   assertInt("margem alvo", input.targetMarginBp);
@@ -349,27 +380,65 @@ function evaluate(input: OfferInput): OfferResult {
     else if (input.durationHours) fixedCostCents = roundDiv(mul(input.fixedCostPerDayCents, input.durationHours), 24);
   }
 
+  // despesas avulsas: valor, dia e km viram centavos; percentual acompanha o preço do frete (ver abaixo)
+  const expenses = input.expenses ?? [];
+  const expenseLines: ExpenseLineResult[] = [];
+  let expenseCostCents = 0;
+  let expenseDiscountCents = 0;
+  let expensePercentBp = 0;
+  let dayExpenseWithoutDuration = false;
+  for (const line of expenses) {
+    let cents: number | null = null;
+    if (line.basis === "trip") cents = line.amount;
+    else if (line.basis === "km") cents = mul(line.amount, totalKm);
+    else if (line.basis === "day") {
+      if (line.amount === 0) cents = 0;
+      else if (input.durationHours) cents = roundDiv(mul(line.amount, input.durationHours), 24);
+      else dayExpenseWithoutDuration = true;
+    }
+    if (line.basis === "percent") {
+      // arredondamento acumulado: a soma das linhas é exatamente o arredondamento do conjunto
+      const before = roundDiv(mul(gross, input.otherPercentBp + expensePercentBp), 10000);
+      expensePercentBp += line.amount;
+      cents = roundDiv(mul(gross, input.otherPercentBp + expensePercentBp), 10000) - before;
+    } else if (cents !== null) {
+      if (line.payer === "me") expenseCostCents += cents;
+      else expenseDiscountCents += cents;
+    }
+    expenseLines.push({ label: line.label, basis: line.basis, payer: line.payer, cents });
+  }
+  const discountsCents = input.deductionsCents + expenseDiscountCents;
+
   const knownFuelCents = legs.reduce((sum, leg) => sum + (leg.costCents ?? 0), 0);
-  const knownCostsCents = knownFuelCents + (arlaCostCents ?? 0) + tollCostCents + input.extraCostsCents + (vehicleCostCents ?? 0) + (fixedCostCents ?? 0);
+  const knownCostsCents = knownFuelCents + (arlaCostCents ?? 0) + tollCostCents + input.extraCostsCents + expenseCostCents + (vehicleCostCents ?? 0) + (fixedCostCents ?? 0);
 
   // retenção estimada: proporcional ao frete, então entra na conta como um percentual sobre o frete
   const retentionApplies = input.retention?.profile === "autonomo" && input.retention.payer === "empresa";
   const retentionCounted = retentionApplies && input.retention?.count === true;
   const retentionBp = retentionApplies ? RETENTION_INSS_BP + RETENTION_SEST_SENAT_BP : 0;
-  const retentionCents = roundDiv(mul(gross, retentionBp), 10000);
-  const retentionInssCents = retentionApplies ? roundDiv(mul(gross, RETENTION_INSS_BP), 10000) : 0;
+  // contada: arredondamento acumulado depois dos outros percentuais, para as linhas somarem exatamente; só estimada: sobre o frete
+  const percentBeforeRetentionBp = input.otherPercentBp + expensePercentBp;
+  const beforeRetentionCents = roundDiv(mul(gross, percentBeforeRetentionBp), 10000);
+  const retentionCents = retentionCounted
+    ? roundDiv(mul(gross, percentBeforeRetentionBp + retentionBp), 10000) - beforeRetentionCents
+    : roundDiv(mul(gross, retentionBp), 10000);
+  const retentionInssCents = !retentionApplies
+    ? 0
+    : retentionCounted
+      ? roundDiv(mul(gross, percentBeforeRetentionBp + RETENTION_INSS_BP), 10000) - beforeRetentionCents
+      : roundDiv(mul(gross, RETENTION_INSS_BP), 10000);
   const retentionSestSenatCents = retentionCents - retentionInssCents;
 
   const params: PriceParams = {
     fixedCostsCents: knownCostsCents,
-    deductionsCents: input.deductionsCents,
+    deductionsCents: discountsCents,
     commissionBp: input.commissionBp,
     commissionBase: input.commissionBase,
-    otherPercentBp: input.otherPercentBp + (retentionCounted ? retentionBp : 0),
+    otherPercentBp: input.otherPercentBp + expensePercentBp + (retentionCounted ? retentionBp : 0),
   };
-  const { commission, other: otherWithRetention, result } = resultAt(gross, params);
-  // as linhas somam exatamente: o que é retenção sai da linha de outros percentuais
-  const other = otherWithRetention - (retentionCounted ? retentionCents : 0);
+  const { commission, result } = resultAt(gross, params);
+  // as linhas somam exatamente: despesas em percentual e retenção contada saem do total dos percentuais
+  const other = roundDiv(mul(gross, input.otherPercentBp), 10000);
   const resultWithRetentionsCents = retentionCounted ? result : result - retentionCents;
 
   const pending: Pending[] = [];
@@ -380,7 +449,7 @@ function evaluate(input: OfferInput): OfferResult {
   if (input.tollPayer === "me" && input.tollCents === null) add("PEDAGIO_NAO_CONFERIDO");
   if (arlaIncomplete) add("ARLA_INCOMPLETO");
   if (input.vehicleCostCentsPerKm === null) add("CUSTO_KM_VEICULO_NAO_INFORMADO");
-  if (input.fixedCostPerDayCents !== null && input.fixedCostPerDayCents > 0 && !input.durationHours) add("DURACAO_AUSENTE");
+  if ((input.fixedCostPerDayCents !== null && input.fixedCostPerDayCents > 0 && !input.durationHours) || dayExpenseWithoutDuration) add("DURACAO_AUSENTE");
   if (input.moneyCostMonthlyBp > 0 && input.balanceDays === null) add("PRAZO_AUSENTE");
 
   const targetPriceCents = minimumPriceCents(params, input.targetMarginBp);
@@ -395,9 +464,9 @@ function evaluate(input: OfferInput): OfferResult {
 
   // dinheiro parado: o adiantamento cobre parte do que sai na estrada; o saldo demora
   const advanceCents = roundDiv(mul(gross, input.advanceBp), 10000);
-  const upfrontCents = knownFuelCents + (arlaCostCents ?? 0) + tollCostCents + input.extraCostsCents;
+  const upfrontCents = knownFuelCents + (arlaCostCents ?? 0) + tollCostCents + input.extraCostsCents + expenseCostCents;
   const cashNeededCents = Math.max(0, upfrontCents - advanceCents);
-  const receivableCents = Math.max(0, gross - input.deductionsCents - advanceCents);
+  const receivableCents = Math.max(0, gross - discountsCents - advanceCents);
   const financingCostCents =
     input.moneyCostMonthlyBp > 0 && input.balanceDays !== null
       ? roundDiv(mul(mul(receivableCents, input.moneyCostMonthlyBp), input.balanceDays), 300000)
@@ -444,6 +513,8 @@ function evaluate(input: OfferInput): OfferResult {
     tollCostCents,
     vehicleCostCents,
     fixedCostCents,
+    expenseLines,
+    discountsCents,
     knownCostsCents,
     commissionCents: commission,
     otherPercentCents: other,
