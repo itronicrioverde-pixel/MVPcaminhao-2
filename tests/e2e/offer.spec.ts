@@ -562,6 +562,10 @@ test("modo rápido: 80% do frete cai no início e o adiantamento cobre as despes
   await expect(card).toContainText("R$ 2.012,00");
   await expect(card).toContainText("na descarga");
   await expect(card).toContainText("O adiantamento cobre as despesas da estrada");
+  // o nome do número diz o que ele é e como se calcula
+  await expect(card).toContainText("Caixa que você precisa ter até descarregar");
+  await expect(card).toContainText("menos o adiantamento que você recebe");
+  await expect(card).not.toContainText("Dinheiro seu necessário");
   // o pagamento não muda o lucro, só o dinheiro que sai do bolso
   await expect(card).toContainText("R$ 4.556,16");
 });

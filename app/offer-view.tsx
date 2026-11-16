@@ -803,9 +803,9 @@ export function OfferView() {
 
                 <div className="rounded-[22px] border border-black/[.05] bg-white p-5 text-sm shadow-sm">
                   <h3 className="mb-1 text-lg font-bold">Dinheiro e prazo</h3>
-                  <Row label="Dinheiro seu necessário até receber" detail="Diesel, ARLA, pedágio e outros custos da estrada, menos o adiantamento" value={formatBRL(result.cashNeededCents)} />
+                  <Row label="Caixa que você precisa ter até descarregar" detail="Gastos de estrada (diesel, ARLA, pedágio e outros) menos o adiantamento que você recebe. Zero quer dizer que o adiantamento cobre tudo." value={formatBRL(result.cashNeededCents)} />
                   {result.advanceCents > 0 && result.cashNeededCents === 0 ? (
-                    <p className="text-sm font-semibold text-emerald-800">O adiantamento cobre as despesas da estrada: você não precisa tirar dinheiro do bolso.</p>
+                    <p className="text-sm font-semibold text-emerald-800">O adiantamento cobre as despesas da estrada: você não precisa usar o seu caixa.</p>
                   ) : null}
                   {result.advanceCents > 0 ? <Row label="Adiantamento" detail="logo no início" value={formatBRL(result.advanceCents)} /> : null}
                   {result.advanceCents > 0 || result.financingCostCents > 0 ? <Row label="Saldo a receber" detail={input.balanceDays === null ? undefined : input.balanceDays === 0 ? "na descarga" : `em ${input.balanceDays} dias`} value={formatBRL(result.receivableCents)} /> : null}
