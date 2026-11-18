@@ -98,6 +98,22 @@ try{
   assert.equal((await fuel.POST(call('POST','/api/fuel',rec('t2',500500,100),'owner-b'))).status,201,'outro dono pode usar o mesmo id');
   assert.equal((await fuel.POST(call('POST','/api/fuel',rec('t5',500000,100)))).status,201,'o dono pode lançar de novo com um id novo');
 
+  // mensagens certas: odômetro repetido, id repetido e id apagado são coisas diferentes
+  await fuel.DELETE(call('DELETE','/api/fuel?all=true'));
+  await fuel.POST(call('POST','/api/fuel',rec('m1',700000,100)));
+  r=await fuel.POST(call('POST','/api/fuel',rec('m2',700000,100)));assert.equal(r.status,409);assert.match((await r.json()).error,/od\u00f4metro/);
+  r=await fuel.POST(call('POST','/api/fuel',rec('m1',700500,100)));assert.equal(r.status,409);assert.doesNotMatch((await r.json()).error,/od\u00f4metro/,'id repetido não fala de odômetro');
+  await fuel.DELETE(call('DELETE','/api/fuel?id=m1'));
+  r=await fuel.POST(call('POST','/api/fuel',rec('m1',700000,100)));assert.equal(r.status,409);assert.match((await r.json()).error,/apagado/);
+  assert.equal((await list()).length,0,'nada foi criado nos três casos');
+
+  // apagados antigos saem da lista e são limpos; os recentes continuam
+  await DB.prepare("INSERT INTO fuel_deleted (id,owner_id,deleted_at) VALUES ('velhissimo','owner-a',datetime('now','-500 days'))").run();
+  assert.ok(!(await full()).deleted.includes('velhissimo'),'tombstone de mais de 400 dias não é enviado');assert.ok((await full()).deleted.includes('m1'));
+  await fuel.DELETE(call('DELETE','/api/fuel?id=nao-existe'));
+  assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM fuel_deleted WHERE id='velhissimo'").first()).n,0,'a limpeza acontece ao apagar');
+  assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM fuel_deleted WHERE id='m1'").first()).n,1,'o recente fica');
+
   // depois de apagar, o odômetro pode ser usado de novo
   assert.equal((await fuel.POST(call('POST','/api/fuel',rec('f1',100000,400)))).status,201);
   console.log('PASS: /api/fuel — sessão e origem, criar/listar em ordem, id do servidor, odômetro e id duplicados (409), validação, isolamento por dono, importação em lote idempotente e atômica, limite, apagar um e todos.');

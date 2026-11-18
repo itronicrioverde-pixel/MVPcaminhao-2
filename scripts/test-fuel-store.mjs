@@ -21,26 +21,21 @@ try{
   assert.deepEqual(st.loadFuel(s,'cccc'),[],'conta sem cópia começa vazia');
   assert.notEqual(st.fuelKey('aaaa'),st.fuelKey('bbbb'));assert.ok(st.fuelKey('aaaa').includes('aaaa'));
 
-  // última conta que sincronizou neste aparelho
-  assert.equal(st.lastOwner(s),null);st.setLastOwner(s,'aaaa');assert.equal(st.lastOwner(s),'aaaa');
-
-  // o que foi lançado sem conta conhecida (sem internet na primeira vez) fica à parte e a primeira conta que sincronizar o assume
-  const p=mem();st.saveFuel(p,st.PENDING_OWNER,[R('9',900)]);st.saveFuel(p,'aaaa',[R('1',100)]);
-  assert.deepEqual(st.claimPending(p,'aaaa').map(x=>x.id),['9'],'devolve o que estava pendente');
-  assert.deepEqual(st.loadFuel(p,st.PENDING_OWNER),[],'e esvazia o pendente');
-  assert.deepEqual(st.claimPending(p,'aaaa'),[],'nada para assumir da segunda vez');
-  assert.deepEqual(st.loadFuel(p,'aaaa').map(x=>x.id),['1'],'o claim só devolve; quem junta é o chamador');
-
   // dado quebrado ou inválido é ignorado, sem erro
   const b=mem();
-  for(const bad of ['{nao e json','"texto"','{"a":1}','[1,2]','[{"id":5}]',JSON.stringify([{...R('1',100),litersMilli:0}]),JSON.stringify([R('1',100),R('2',100)])]){b.setItem(st.fuelKey('aaaa'),bad);assert.deepEqual(st.loadFuel(b,'aaaa'),[],`ignora: ${bad.slice(0,20)}`);}
+  for(const bad of ['{nao e json','"texto"','{"a":1}','[1,2]','[{"id":5}]',JSON.stringify([{...R('1',100),litersMilli:0}])]){b.setItem(st.fuelKey('aaaa'),bad);assert.deepEqual(st.loadFuel(b,'aaaa'),[],`ignora: ${bad.slice(0,20)}`);}
+
+  // um registro ruim não leva os outros: só ele é descartado
+  const mix=mem();
+  mix.setItem(st.fuelKey('aaaa'),JSON.stringify([R('1',100),{id:'2',odometerKm:-5,litersMilli:1,full:true,state:'loaded'},R('3',300),R('4',300),{id:7},R('5',500)]));
+  assert.deepEqual(st.loadFuel(mix,'aaaa').map(x=>x.id),['1','3','5'],'mantém os válidos; descarta o inválido e o odômetro repetido (fica o primeiro)');
 
   // armazenamento bloqueado: não lança erro
   const broken={getItem(){throw new Error('x');},setItem(){throw new Error('x');},removeItem(){throw new Error('x');}};
-  assert.deepEqual(st.loadFuel(broken,'aaaa'),[]);st.saveFuel(broken,'aaaa',[R('1',1)]);assert.equal(st.lastOwner(broken),null);st.setLastOwner(broken,'a');assert.deepEqual(st.claimPending(broken,'a'),[]);
-  assert.deepEqual(st.loadFuel(null,'aaaa'),[],'sem armazenamento');st.saveFuel(null,'aaaa',[]);assert.equal(st.lastOwner(null),null);
+  assert.deepEqual(st.loadFuel(broken,'aaaa'),[]);st.saveFuel(broken,'aaaa',[R('1',1)]);
+  assert.deepEqual(st.loadFuel(null,'aaaa'),[],'sem armazenamento');st.saveFuel(null,'aaaa',[]);
 
   // o dono é só letras e números: nada de chave estranha
-  assert.throws(()=>st.fuelKey('a/b'),RangeError);assert.throws(()=>st.fuelKey(''),RangeError);assert.doesNotThrow(()=>st.fuelKey(st.PENDING_OWNER));
-  console.log('PASS: cópia das medições no aparelho separada por conta, conta pendente assumida uma vez, dado inválido ignorado, armazenamento bloqueado sem erro.');
+  assert.throws(()=>st.fuelKey('a/b'),RangeError);assert.throws(()=>st.fuelKey(''),RangeError);assert.equal('lastOwner' in st,false,'não há mais conta adivinhada');assert.equal('claimPending' in st,false,'não há mais conta pendente');
+  console.log('PASS: cópia das medições no aparelho separada por conta, dado inválido ignorado, armazenamento bloqueado sem erro.');
 }finally{await rm(temp,{recursive:true,force:true});}

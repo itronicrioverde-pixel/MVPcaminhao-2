@@ -52,6 +52,9 @@ jobs:
       - name: Test fuel local storage per account
         run: node scripts/test-fuel-store.mjs
 
+      - name: Test fuel sync
+        run: node scripts/test-fuel-sync.mjs
+
       - name: Test company logo
         run: node scripts/test-logo.mjs
 
