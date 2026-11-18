@@ -197,8 +197,12 @@ Não feito, de propósito: estadia **recebida** (o contratante paga a espera) co
 
 ## Ajustes depois da revisão do código
 
-- **Medições por conta:** a cópia no aparelho é separada pelo identificador da conta que o servidor devolve (um código derivado, não o id real). A lista só aparece depois de o servidor responder. Uma conta nunca vê nem envia o que é de outra no mesmo navegador. Sem internet, mostra a cópia da última conta que sincronizou. O que foi lançado sem nenhuma conta conhecida fica "pendente" e é assumido pela primeira conta que sincronizar.
+- **Medições por conta:** a cópia no aparelho é separada pelo identificador da conta que o servidor devolve (um código derivado, não o id real). A lista só aparece depois de o servidor confirmar a conta. Se a consulta falha (erro, tempo esgotado, sessão expirada ou resposta fora do formato), a tela **não mostra nem guarda nada**: não há palpite sobre quem está logado. Uma conta nunca vê nem envia o que é de outra no mesmo navegador. A cópia local serve só para não perder o que foi lançado por uma conta já confirmada e ainda não foi aceito pelo banco.
+- **Envio que falha:** o que não foi aceito continua guardado e aparece como "ainda não foi enviado", mesmo que um envio posterior dê certo. O envio é feito em partes de até 200. Se o servidor recusa (erro 4xx), a tela diz que recusou, em vez de prometer tentar sozinha.
 - **Apagados não voltam:** o banco guarda os ids apagados (`fuel_deleted`). Uma cópia antiga em outro aparelho é descartada ao sincronizar, e o servidor recusa recriar um registro apagado.
 - **Saldo a receber:** a retenção contada e os descontos reduzem o saldo da descarga, e o custo de esperar usa o saldo certo. Se o adiantamento passar do que há a receber, o saldo fica **negativo**: a tela mostra "Você devolve ao contratante" e um aviso, em vez de zero.
-- **Digitar dinheiro:** campos em reais formatam milhares enquanto se digita (1006000 vira 1.006.000) e aceitam até dois dígitos depois da vírgula. O ponto digitado conta como milhar. Campos de valor pequeno por km e o preço do litro não são formatados.
+- **Digitar dinheiro:** campos em reais formatam milhares enquanto se digita (1006000 vira 1.006.000) e aceitam até dois dígitos depois da vírgula. Um ponto com um ou dois dígitos no fim ("200.5") é lido como decimal e vira vírgula; o ponto de milhar tem sempre três dígitos. Campos de valor pequeno por km e o preço do litro não são formatados.
 - **Dependências:** `next` 16.4.6, `zod` 4 e `fast-uri` 3.1.9; a auditoria de produção ficou sem vulnerabilidades.
+- **Outras despesas:** ao trocar a unidade (percentual, reais por km, reais), o campo de valor é limpo, para um número digitado como percentual não virar reais sem aviso.
+- **Saldo a receber:** quando a retenção é só estimada, o saldo mostra "antes da retenção estimada de R$ X".
+- **Apagados:** o banco lembra os ids apagados por 400 dias; depois disso eles saem da lista e são limpos.
