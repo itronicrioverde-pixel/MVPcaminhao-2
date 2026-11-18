@@ -57,13 +57,15 @@ const MAX_MASK_DIGITS = 13;
 
 /**
  * Formata o dinheiro enquanto o dono digita: milhares com ponto e até dois dígitos depois da vírgula.
- * O ponto digitado é sempre milhar (o decimal é a vírgula), igual ao teclado em português.
- * O resultado é lido do mesmo jeito por `parseMoney`.
+ * Um ponto seguido de um ou dois dígitos no fim ("200.5", "10.06") é um decimal colado de fora e vira vírgula;
+ * o ponto de milhar sempre vem com três dígitos depois. O resultado é lido do mesmo jeito por `parseMoney`.
  */
 export function maskMoney(text: string): string {
-  const comma = text.indexOf(",");
-  const integerPart = (comma === -1 ? text : text.slice(0, comma)).replace(/\D/g, "").slice(0, MAX_MASK_DIGITS).replace(/^0+(?=\d)/, "");
-  const decimals = comma === -1 ? null : text.slice(comma + 1).replace(/\D/g, "").slice(0, 2);
+  const trimmed = text.replace(/[^\d.,]/g, "");
+  const normalized = /^\d+\.\d{1,2}$/.test(trimmed) ? trimmed.replace(".", ",") : text;
+  const comma = normalized.indexOf(",");
+  const integerPart = (comma === -1 ? normalized : normalized.slice(0, comma)).replace(/\D/g, "").slice(0, MAX_MASK_DIGITS).replace(/^0+(?=\d)/, "");
+  const decimals = comma === -1 ? null : normalized.slice(comma + 1).replace(/\D/g, "").slice(0, 2);
   if (integerPart === "" && decimals === null) return "";
   const grouped = (integerPart === "" ? "0" : integerPart).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return decimals === null ? grouped : `${grouped},${decimals}`;

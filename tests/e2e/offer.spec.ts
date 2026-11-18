@@ -791,14 +791,60 @@ test("medir consumo: remover tira também do banco", async ({ page }) => {
   await expect.poll(async () => (await (await page.request.get("/api/fuel")).json()).records.length).toBe(6);
 });
 
-test("medir consumo: sem conexão com o banco guarda no aparelho, avisa e envia depois", async ({ page }) => {
+test("medir consumo: sem conseguir confirmar a conta, não mostra nem guarda nada", async ({ page }) => {
   await page.route("**/api/fuel", (route) => route.abort());
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Não consegui confirmar a sua conta");
+  await expect(page.getByRole("button", { name: "Adicionar abastecimento", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(0);
+
+  await page.unroute("**/api/fuel");
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  await expect(page.getByRole("button", { name: "Adicionar abastecimento", exact: true })).toBeEnabled();
+});
+
+test("medir consumo: se a consulta falha para a outra conta, as medições da conta anterior não aparecem", async ({ page, context }) => {
+  const project = test.info().project.name;
+  const asUser = (id: string) => context.setExtraHTTPHeaders({ "oai-authenticated-user-id": `falha-${id}-${project}`, "oai-authenticated-user-email": `${id}@sites.test`, "oai-authenticated-user-full-name": `Conta ${id}` });
+  await asUser("a");
+  await page.request.delete("/api/fuel?all=true");
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await addFuel(page, "100.600", "300", true, "loaded");
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+
+  for (const failure of ["500", "abort"] as const) {
+    await asUser("b");
+    await page.route("**/api/fuel", (route) => (failure === "abort" ? route.abort() : route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "erro", code: "INTERNAL_ERROR" }) })));
+    await page.reload();
+    await openOffer(page, "quick", { keepFuel: true });
+    await openMeasure(page);
+    await expect(page.getByTestId("fuel-status")).toContainText("Não consegui confirmar a sua conta");
+    await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(0);
+    await expect(measured(page)).not.toContainText("1,90");
+    await page.unroute("**/api/fuel");
+  }
+
+  await asUser("a");
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
+});
+
+test("medir consumo: se o envio falha depois de confirmar a conta, a medição continua guardada e é enviada depois", async ({ page }) => {
+  await page.route("**/api/fuel", (route) => (route.request().method() === "POST" ? route.abort() : route.continue()));
   await openOffer(page, "quick");
   await openMeasure(page);
   await addFuel(page, "100.000", "400", true, "loaded");
   await addFuel(page, "100.600", "300", true, "loaded");
   await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
-  await expect(page.getByTestId("fuel-status")).toContainText("só neste aparelho");
+  await expect(page.getByTestId("fuel-status")).toContainText("ainda não foram enviadas");
   expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(0);
 
   await page.unroute("**/api/fuel");
@@ -808,6 +854,46 @@ test("medir consumo: sem conexão com o banco guarda no aparelho, avisa e envia 
   await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
   await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
   expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(2);
+});
+
+test("medir consumo: se a conexão cai no envio da abertura, o que estava pendente não some", async ({ page }) => {
+  await openOffer(page, "quick");
+  const info = await (await page.request.get("/api/fuel")).json();
+  const pending = { id: "pendente-1", odometerKm: 123456, litersMilli: 250000, full: true, state: "loaded" };
+  await page.evaluate(([key, record]) => window.localStorage.setItem(key, JSON.stringify([record])), [`rota-financeira:consumo-medido:v2:${info.ownerKey}`, pending] as const);
+  await page.route("**/api/fuel", (route) => (route.request().method() === "PUT" ? route.abort() : route.continue()));
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("ainda não foram enviadas");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(1);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), `rota-financeira:consumo-medido:v2:${info.ownerKey}`)).toContain("pendente-1");
+  expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(0);
+  // um envio novo que dá certo não esconde que o antigo ainda está pendente
+  await addFuel(page, "124.000", "300", true, "loaded");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
+  await expect(page.getByTestId("fuel-status")).toContainText("ainda não foram enviadas");
+  expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(1);
+
+  await page.unroute("**/api/fuel");
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
+  expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(2);
+});
+
+test("medir consumo: se o servidor recusa o envio, o app diz isso e não finge que vai tentar de novo sozinho", async ({ page }) => {
+  await openOffer(page, "quick");
+  const info = await (await page.request.get("/api/fuel")).json();
+  await page.evaluate(([key, record]) => window.localStorage.setItem(key, JSON.stringify([record])), [`rota-financeira:consumo-medido:v2:${info.ownerKey}`, { id: "recusada-1", odometerKm: 222222, litersMilli: 100000, full: true, state: "loaded" }] as const);
+  await page.route("**/api/fuel", (route) => (route.request().method() === "PUT" ? route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "Confira os campos", code: "INVALID_DATA" }) }) : route.continue()));
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("recusou");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(1);
 });
 
 test("medir consumo: se não deu para apagar no banco, o abastecimento continua na lista", async ({ page }) => {
@@ -1016,6 +1102,30 @@ test("digitar dinheiro: os milhares e os centavos aparecem enquanto o dono digit
   await perKm.fill("");
   await perKm.pressSequentially("1500");
   await expect(perKm).toHaveValue("1.500");
+});
+
+test("outras despesas: trocar a forma de cobrança ou quem arca não reaproveita o número com outro significado", async ({ page }) => {
+  await openExpenses(page);
+  await addChip(page, "Seguro da carga");
+  const amount = page.getByLabel(/^Valor da despesa 1 /);
+  await amount.fill("2");
+  await page.getByLabel("Quem arca com a despesa 1", { exact: true }).selectOption("contractor");
+  await expect(page.getByLabel("Como cobra a despesa 1", { exact: true })).toHaveValue("trip");
+  await expect(amount).toHaveValue("");
+
+  await amount.fill("380");
+  await page.getByLabel("Como cobra a despesa 1", { exact: true }).selectOption("day");
+  await expect(amount).toHaveValue("380");
+  await page.getByLabel("Como cobra a despesa 1", { exact: true }).selectOption("km");
+  await expect(amount).toHaveValue("");
+});
+
+test("saldo a receber: avisa quando ele ainda está antes da retenção estimada", async ({ page }) => {
+  await openOffer(page, "quick");
+  await fillQuick(page, "10.060");
+  await expect(result(page)).toContainText("antes da retenção estimada de R$ 271,62");
+  await page.getByLabel("Contar as retenções estimadas no resultado", { exact: true }).check();
+  await expect(result(page)).not.toContainText("antes da retenção estimada");
 });
 
 // ---------- perfil fiscal e retenções estimadas ----------

@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ApiError, httpApi } from "@/lib/api-client";
-import { claimPending, lastOwner, loadFuel, PENDING_OWNER, saveFuel, setLastOwner } from "@/lib/fuel-store";
-import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, planFuelSync, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
+import { saveFuel } from "@/lib/fuel-store";
+import { syncFuel } from "@/lib/fuel-sync";
+import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
 import { analyzeOffer, costPerKmFromYear, type Decision, type ExpenseBasis, type OfferResult } from "@/lib/offer";
 import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, MAX_EXPENSE_ROWS, maskMoney, parseKm, parseLiters, parseMoney, type ExpenseRow, type OfferForm } from "@/lib/offer-form";
 
@@ -195,6 +196,11 @@ const BASIS_OPTIONS: { value: ExpenseBasis; label: string; hint: string }[] = [
   { value: "percent", label: "% do frete", hint: "%" },
 ];
 
+/** Unidade do valor: reais da viagem ou do dia, reais por km, ou percentual. */
+function unitOf(basis: ExpenseBasis) {
+  return basis === "percent" ? "percent" : basis === "km" ? "km" : "money";
+}
+
 function newRow(patch: Partial<ExpenseRow> = {}): ExpenseRow {
   return { id: `despesa-${crypto.randomUUID()}`, label: "", amount: "", basis: "trip", payer: "me", ...patch };
 }
@@ -207,6 +213,8 @@ function ExpensesEditor({ rows, errors, quick, onChange }: {
     const next = { ...row, ...patch };
     // desconto do contratante é sempre um valor em reais: percentual não vale
     if (next.payer === "contractor" && next.basis === "percent") next.basis = "trip";
+    // o número digitado só vale para a unidade em que foi digitado: ao mudar a unidade, o campo é limpo
+    if (unitOf(next.basis) !== unitOf(row.basis)) next.amount = "";
     return next;
   }));
   const full = rows.length >= MAX_EXPENSE_ROWS;
@@ -330,7 +338,12 @@ export function OfferView() {
   const [fuelState, setFuelState] = useState<"loaded" | "empty">("loaded");
   const [fuelError, setFuelError] = useState<string | null>(null);
   // "saved": está no banco; "local": só neste aparelho por enquanto (sem conexão ou sem login)
-  const [fuelStatus, setFuelStatus] = useState<"checking" | "saved" | "local">("checking");
+  const [fuelStatus, setFuelStatus] = useState<"checking" | "unverified" | "ready">("checking");
+  // ids que existem só neste aparelho (o envio ainda não foi aceito) e se o servidor recusou o envio
+  const [fuelUnsent, setFuelUnsent] = useState<string[]>([]);
+  const [fuelRejected, setFuelRejected] = useState(false);
+  // envios em andamento: enquanto houver, o status não pode dizer que está salvo
+  const [fuelSaving, setFuelSaving] = useState(0);
   const [fuelUsed, setFuelUsed] = useState<string | null>(null);
   const [yearSpend, setYearSpend] = useState("");
   const [yearKm, setYearKm] = useState("");
@@ -351,40 +364,37 @@ export function OfferView() {
     if (fuelOwner !== null) saveFuel(window.localStorage, fuelOwner, fuelRecords);
   }, [fuelOwner, fuelRecords]);
 
-  // Ao abrir: o servidor diz de quem é a conta; só então junta a cópia dela com o banco e envia o que faltar.
+  // Ao abrir: o servidor diz de quem é a conta. Sem essa confirmação nada local é lido nem mostrado (ver lib/fuel-sync.ts).
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const { ownerKey, records: remote, deleted } = await httpApi.get<{ ownerKey: string; records: StoredFuel[]; deleted: string[] }>("/api/fuel", { timeoutMs: 6000 });
-        // o que foi lançado antes de saber a conta (sem internet) é da primeira conta que sincroniza
-        const local = [...loadFuel(window.localStorage, ownerKey), ...claimPending(window.localStorage)];
-        const plan = planFuelSync(local, remote, deleted);
-        if (plan.toUpload.length > 0) await httpApi.put("/api/fuel", { records: plan.toUpload });
-        if (cancelled) return;
-        setLastOwner(window.localStorage, ownerKey);
-        setFuelOwner(ownerKey);
-        setFuelRecords(plan.merged);
-        setFuelStatus("saved");
-        if (plan.conflicts.length > 0) setFuelError(`${plan.conflicts.length} abastecimento(s) deste aparelho ficaram de fora porque já havia outro com o mesmo odômetro salvo.`);
-      } catch (error) {
-        if (cancelled) return;
-        setFuelStatus("local");
-        // sessão expirada: não dá para saber de quem é este aparelho, então nada é mostrado
-        if (error instanceof ApiError && error.status === 401) return;
-        // sem conexão: mostra a cópia da última conta que sincronizou aqui, ou a pendente
-        const owner = lastOwner(window.localStorage) ?? PENDING_OWNER;
-        setFuelOwner(owner);
-        setFuelRecords(loadFuel(window.localStorage, owner));
+    syncFuel(
+      {
+        list: () => httpApi.get<{ ownerKey: string; records: StoredFuel[]; deleted: string[] }>("/api/fuel", { timeoutMs: 6000 }),
+        upload: (records) => httpApi.put("/api/fuel", { records }),
+      },
+      window.localStorage,
+    ).then((outcome) => {
+      if (cancelled) return;
+      if (outcome.kind === "unverified") {
+        setFuelStatus("unverified");
+        return;
       }
-    })();
+      setFuelOwner(outcome.owner);
+      setFuelRecords(outcome.records);
+      setFuelUnsent(outcome.pendingIds);
+      setFuelRejected(outcome.uploadFailure === "rejected");
+      setFuelStatus("ready");
+      if (outcome.conflicts > 0) setFuelError(`${outcome.conflicts} abastecimento(s) deste aparelho ficaram de fora porque já havia outro com o mesmo odômetro salvo.`);
+    }).catch(() => {
+      if (!cancelled) setFuelStatus("unverified");
+    });
     return () => { cancelled = true; };
   }, []);
 
   const consumption = useMemo(() => (validateFuelRecords(fuelRecords).length === 0 ? measureConsumption(fuelRecords) : null), [fuelRecords]);
 
   function addFuelRecord() {
-    if (fuelOwner === null) return setFuelError("Entre na sua conta para guardar as medições.");
+    if (fuelOwner === null) return setFuelError("Ainda não consegui confirmar a sua conta. Abra esta tela de novo com internet.");
     const odometer = parseKm(fuelOdometer);
     const liters = parseLiters(fuelLiters);
     if (odometer.error || liters.error) return setFuelError(odometer.error ?? liters.error);
@@ -397,16 +407,19 @@ export function OfferView() {
     setFuelOdometer("");
     setFuelLiters("");
     const added = next[next.length - 1];
-    setFuelStatus("checking");
+    setFuelSaving((count) => count + 1);
     httpApi.post("/api/fuel", added).then(
-      () => setFuelStatus("saved"),
+      () => {
+        setFuelUnsent((current) => current.filter((id) => id !== added.id));
+        setFuelSaving((count) => count - 1);
+      },
       (error) => {
+        setFuelSaving((count) => count - 1);
         if (error instanceof ApiError && error.status === 409) {
           setFuelError("Esse odômetro já está salvo no banco. Remova o antigo antes, se quiser trocar.");
           setFuelRecords((current) => current.filter((item) => item.id !== added.id));
-          setFuelStatus("saved");
         } else {
-          setFuelStatus("local");
+          setFuelUnsent((current) => (current.includes(added.id) ? current : [...current, added.id]));
         }
       },
     );
@@ -424,6 +437,7 @@ export function OfferView() {
     }
     setFuelError(null);
     setFuelRecords((current) => current.filter((item) => item.id !== id));
+    setFuelUnsent((current) => current.filter((item) => item !== id));
   }
 
   function useMeasured() {
@@ -600,9 +614,9 @@ export function OfferView() {
               </div>
               {fuelError ? <p className="font-semibold text-red-700">{fuelError}</p> : null}
               <p data-testid="fuel-status" className="text-xs text-slate-600">
-                {fuelStatus === "saved" ? "Salvo na sua conta." : fuelStatus === "local" ? (fuelOwner === null ? "Entre na sua conta para ver e guardar as medições." : "Salvo só neste aparelho por enquanto. Envio para a sua conta quando a conexão voltar e você abrir esta tela.") : "Verificando…"}
+                {fuelStatus === "checking" ? "Verificando…" : fuelSaving > 0 ? "Salvando…" : fuelStatus === "unverified" ? "Não consegui confirmar a sua conta agora, então não mostro nem guardo medições. Verifique a internet e abra esta tela de novo." : fuelUnsent.length === 0 ? "Salvo na sua conta." : fuelRejected ? "O servidor recusou algumas medições deste aparelho. Confira os valores ou remova essas medições." : "Algumas medições ainda não foram enviadas para a sua conta. Elas ficam guardadas aqui e são enviadas na próxima vez que você abrir esta tela com internet."}
               </p>
-              <button type="button" onClick={addFuelRecord} disabled={fuelOwner === null && fuelStatus === "checking"} className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white disabled:opacity-50">Adicionar abastecimento</button>
+              <button type="button" onClick={addFuelRecord} disabled={fuelOwner === null} className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white disabled:opacity-50">Adicionar abastecimento</button>
 
               {fuelRecords.length > 0 ? (
                 <ul className="divide-y divide-black/10 rounded-xl bg-[#f3f6f4]">
@@ -935,7 +949,14 @@ export function OfferView() {
                   {result.receivableCents < 0 ? (
                     <Row label="Você devolve ao contratante" detail="o adiantamento passou do que você tem a receber" value={formatBRL(-result.receivableCents)} />
                   ) : result.advanceCents > 0 || result.financingCostCents > 0 ? (
-                    <Row label="Saldo a receber" detail={input.balanceDays === null ? undefined : input.balanceDays === 0 ? "na descarga" : `em ${input.balanceDays} dias`} value={formatBRL(result.receivableCents)} />
+                    <Row
+                      label="Saldo a receber"
+                      detail={[
+                        input.balanceDays === null ? null : input.balanceDays === 0 ? "na descarga" : `em ${input.balanceDays} dias`,
+                        result.retentionApplies && !result.retentionCounted ? `antes da retenção estimada de ${formatBRL(result.retentionCents)}` : null,
+                      ].filter(Boolean).join(", ") || undefined}
+                      value={formatBRL(result.receivableCents)}
+                    />
                   ) : null}
                   {result.financingCostCents > 0 ? (
                     <>
