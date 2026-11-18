@@ -56,3 +56,8 @@ export const fuelRecords = sqliteTable("fuel_records", {
  full: integer("full").notNull().default(1), state: text("state").notNull(),
  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, t => [primaryKey({ columns: [t.ownerId, t.id] }), uniqueIndex("uq_fuel_owner_odometer").on(t.ownerId, t.odometerKm)]);
+// Abastecimentos apagados: lembrar o id impede que a cópia antiga de outro aparelho o recrie.
+export const fuelDeleted = sqliteTable("fuel_deleted", {
+ id: text("id").notNull(), ownerId: text("owner_id").notNull(),
+ deletedAt: text("deleted_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, t => [primaryKey({ columns: [t.ownerId, t.id] })]);

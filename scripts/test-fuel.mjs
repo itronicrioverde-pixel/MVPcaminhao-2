@@ -98,5 +98,17 @@ try{
   assert.deepEqual(p.merged.map(x=>x.id),['a','b'],'repetido no aparelho aparece uma vez');assert.deepEqual(p.toUpload.map(x=>x.id),['a','b']);
   const input=[S('c',300),S('a',100)],copy=JSON.parse(JSON.stringify(input));plan(input,[S('b',200)]);assert.deepEqual(input,copy,'não altera o que recebe');
 
+  // 8. registros já apagados no banco não voltam: o aparelho com cópia antiga os descarta
+  p=plan([S('a',100),S('velho',150),S('novo',300)],[S('a',100)],['velho']);
+  assert.deepEqual(p.merged.map(x=>x.id),['a','novo'],'o apagado não volta para a lista');
+  assert.deepEqual(p.toUpload.map(x=>x.id),['novo'],'o apagado não sobe de novo; o novo, que nunca foi enviado, sobe');
+  assert.deepEqual(p.removed.map(x=>x.id),['velho'],'avisa o que foi descartado por já ter sido apagado');
+  p=plan([S('velho',150)],[],['velho','outro']);
+  assert.deepEqual([p.merged,p.toUpload,p.conflicts,p.removed.map(x=>x.id)],[[],[],[],['velho']]);
+  assert.deepEqual(plan([S('a',100)],[S('a',100)]).removed,[],'sem apagados, nada é removido');
+  assert.deepEqual(plan([S('a',100)],[S('a',100)],[]).removed,[]);
+  // um registro novo com o mesmo odômetro de um apagado não é confundido com ele
+  p=plan([S('novo',150)],[],['velho']);assert.deepEqual(p.toUpload.map(x=>x.id),['novo']);
+
   console.log('PASS: referência da ANTT por eixos, média de viagem com vazio e carregado, medição por odômetro (ciclos de tanque cheio a tanque cheio, parciais, misto à parte, ordem livre, nada inventado sem dois cheios), validação, rendimento implausível, formatação e plano de sincronização com o banco.');
 }finally{await rm(temp,{recursive:true,force:true});}

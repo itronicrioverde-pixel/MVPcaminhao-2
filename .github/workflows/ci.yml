@@ -49,6 +49,9 @@ jobs:
       - name: Test fuel measurements API
         run: node scripts/test-fuel-api.mjs
 
+      - name: Test fuel local storage per account
+        run: node scripts/test-fuel-store.mjs
+
       - name: Test company logo
         run: node scripts/test-logo.mjs
 

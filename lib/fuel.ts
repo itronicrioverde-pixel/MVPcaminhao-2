@@ -136,20 +136,25 @@ export type SyncedFuel = FuelRecord & { id: string };
 /**
  * Junta o que está no aparelho com o que está no banco.
  * O banco manda: mesmo id ou mesmo odômetro já existente lá vence o do aparelho.
- * `toUpload` é o que só existe no aparelho; `conflicts` é o que foi descartado por já haver outro com o mesmo odômetro.
+ * `deletedIds` são os registros já apagados: se o aparelho ainda tem uma cópia antiga, ela é descartada, nunca enviada de novo.
+ * `toUpload` é o que só existe no aparelho; `conflicts` é o que foi descartado por já haver outro com o mesmo odômetro;
+ * `removed` é o que foi descartado por já ter sido apagado.
  */
-export function planFuelSync(local: SyncedFuel[], remote: SyncedFuel[]) {
+export function planFuelSync(local: SyncedFuel[], remote: SyncedFuel[], deletedIds: string[] = []) {
+  const deleted = new Set(deletedIds);
   const byId = new Map<string, SyncedFuel>();
   const byOdometer = new Map<number, SyncedFuel>();
   for (const r of remote) { byId.set(r.id, r); byOdometer.set(r.odometerKm, r); }
   const toUpload: SyncedFuel[] = [];
   const conflicts: SyncedFuel[] = [];
+  const removed: SyncedFuel[] = [];
   for (const l of local) {
     if (byId.has(l.id)) continue;
+    if (deleted.has(l.id)) { removed.push(l); continue; }
     if (byOdometer.has(l.odometerKm)) { conflicts.push(l); continue; }
     byId.set(l.id, l); byOdometer.set(l.odometerKm, l); toUpload.push(l);
   }
   const merged = [...byId.values()].sort((a, b) => a.odometerKm - b.odometerKm);
   toUpload.sort((a, b) => a.odometerKm - b.odometerKm);
-  return { merged, toUpload, conflicts };
+  return { merged, toUpload, conflicts, removed };
 }

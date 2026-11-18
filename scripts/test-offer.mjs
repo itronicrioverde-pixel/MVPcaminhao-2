@@ -313,5 +313,29 @@ try{
   // 12. dinheiro sempre inteiro, sem sobra de ponto flutuante
   for(const r of [fuel,full,noKpl,loss]){for(const v of [r.knownCostsCents,r.resultCents,r.commissionCents])assert.ok(Number.isInteger(v));}
 
+  // 13. saldo a receber: retenção contada e descontos reduzem o saldo, e o saldo pode ficar negativo (o dono devolve a diferença)
+  const AUT={profile:'autonomo',payer:'empresa'};
+  const pay=(over={})=>base({freight:{kind:'fixed',cents:1000000},legs:[],tollCents:0,vehicleCostCentsPerKm:0,commissionBp:0,advanceBp:8000,balanceDays:0,...over});
+  assert.equal(o.analyzeOffer(pay()).receivableCents,200000,'sem retenção: R$ 10.000 - R$ 8.000 = R$ 2.000');
+  const ret=o.analyzeOffer(pay({retention:{...AUT,count:true}}));
+  assert.equal(ret.retentionCents,27000);assert.equal(ret.receivableCents,173000,'retenção contada reduz o saldo: R$ 1.730');
+  assert.equal(o.analyzeOffer(pay({retention:{...AUT,count:false}})).receivableCents,200000,'só estimada: o saldo não muda, como o resultado');
+  const wait=o.analyzeOffer(pay({retention:{...AUT,count:true},moneyCostMonthlyBp:300,balanceDays:30}));
+  assert.equal(wait.financingCostCents,5190,'3% ao mês sobre R$ 1.730,00 por 30 dias');
+  assert.equal(o.analyzeOffer(pay({moneyCostMonthlyBp:300,balanceDays:30})).financingCostCents,6000,'sem retenção: sobre R$ 2.000,00');
+  const bothCuts=o.analyzeOffer(pay({deductionsCents:50000,retention:{...AUT,count:true}}));
+  assert.equal(bothCuts.receivableCents,200000-50000-27000,'descontos e retenção juntos');
+  const neg=o.analyzeOffer(pay({deductionsCents:300000}));
+  assert.equal(neg.receivableCents,-100000,'frete 10.000, adiantamento 8.000 e descontos 3.000: o dono devolve R$ 1.000');
+  assert.ok(neg.notices.some(n=>n.code==='SALDO_NEGATIVO'),'avisa que o contratante vai cobrar a diferença');
+  assert.equal(neg.resultCents,700000,'o resultado já tinha o desconto: o saldo negativo não muda o lucro');
+  const negWait=o.analyzeOffer(pay({deductionsCents:300000,moneyCostMonthlyBp:300,balanceDays:30}));
+  assert.equal(negWait.financingCostCents,0,'não há saldo a esperar, então não há custo de esperar');assert.equal(negWait.resultAfterFinancingCents,negWait.resultCents);
+  assert.equal(o.analyzeOffer(pay({deductionsCents:200000})).receivableCents,0);assert.ok(!o.analyzeOffer(pay({deductionsCents:200000})).notices.some(n=>n.code==='SALDO_NEGATIVO'),'saldo zero não é negativo');
+  assert.ok(o.analyzeOffer(pay({deductionsCents:200001})).notices.some(n=>n.code==='SALDO_NEGATIVO'),'um centavo abaixo de zero já avisa');
+  const negRet=o.analyzeOffer(pay({advanceBp:10000,retention:{...AUT,count:true}}));
+  assert.equal(negRet.receivableCents,-27000,'adiantamento de 100% e retenção: a retenção sai do que já recebeu');assert.ok(negRet.notices.some(n=>n.code==='SALDO_NEGATIVO'));
+  assert.equal(o.analyzeOffer(pay({advanceBp:10000,retention:{...AUT,count:false}})).receivableCents,0);
+
   console.log('PASS: combustível por trecho, média de consumo, frete por tonelada, comissão (bruta e líquida), custo completo sem duplicar, preço de empate e de meta (e que o preço devolvido é o menor que cumpre), prejuízo, frete zero, limites da decisão, pendências que nunca viram zero, por dia e por km, entradas inválidas.');
 }finally{await rm(temp,{recursive:true,force:true});}

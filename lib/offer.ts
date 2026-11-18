@@ -101,6 +101,7 @@ export type NoticeCode =
   | "VALE_PEDAGIO_CONFERIR"
   | "COMPENSA_SO_SEM_PRAZO"
   | "CUSTO_FIXO_NAO_INFORMADO"
+  | "SALDO_NEGATIVO"
   | "RETENCAO_NAO_CONTADA"
   | "RETENCAO_PF"
   | "RETENCAO_MEI"
@@ -159,6 +160,7 @@ export type OfferResult = {
   advanceCents: number;
   /** Dinheiro seu necessário até receber o saldo: custos pagos na estrada menos o adiantamento. */
   cashNeededCents: number;
+  /** Saldo na descarga: frete menos descontos, retenção contada e adiantamento. Negativo = o dono devolve a diferença. */
   receivableCents: number;
   financingCostCents: number;
   resultAfterFinancingCents: number;
@@ -205,6 +207,7 @@ const NOTICE_MESSAGES: Record<NoticeCode, string> = {
   ABAIXO_DO_PISO: "O frete está abaixo do piso mínimo da ANTT calculado com os coeficientes que você informou. Confira o enquadramento na calculadora oficial.",
   VALE_PEDAGIO_CONFERIR: "O pedágio é por conta do contratante (vale-pedágio). Confira se o valor cobre a rota inteira, inclusive a volta se for o caso.",
   COMPENSA_SO_SEM_PRAZO: "O frete cumpre a sua meta, mas depois do custo de esperar o saldo a margem fica abaixo dela.",
+  SALDO_NEGATIVO: "Os descontos e retenções são maiores que o saldo da descarga. O adiantamento já passou do que você tem a receber, então o contratante vai cobrar a diferença de volta.",
   RETENCAO_NAO_CONTADA: "Se a empresa reter INSS e SEST/SENAT do frete, você recebe menos do que o frete combinado. Isso ainda não está no resultado.",
   RETENCAO_PF: "Frete pago por pessoa física: não há retenção. Você mesmo recolhe o SEST/SENAT e o seu INSS.",
   RETENCAO_MEI: "MEI: não encontramos regra de retenção pelo contratante. Confira o recibo.",
@@ -466,10 +469,11 @@ function evaluate(input: OfferInput): OfferResult {
   const advanceCents = roundDiv(mul(gross, input.advanceBp), 10000);
   const upfrontCents = knownFuelCents + (arlaCostCents ?? 0) + tollCostCents + input.extraCostsCents + expenseCostCents;
   const cashNeededCents = Math.max(0, upfrontCents - advanceCents);
-  const receivableCents = Math.max(0, gross - discountsCents - advanceCents);
+  // o que a empresa retém (INSS e SEST/SENAT) também sai do que você recebe, quando a retenção é contada
+  const receivableCents = gross - discountsCents - (retentionCounted ? retentionCents : 0) - advanceCents;
   const financingCostCents =
     input.moneyCostMonthlyBp > 0 && input.balanceDays !== null
-      ? roundDiv(mul(mul(receivableCents, input.moneyCostMonthlyBp), input.balanceDays), 300000)
+      ? roundDiv(mul(mul(Math.max(0, receivableCents), input.moneyCostMonthlyBp), input.balanceDays), 300000)
       : 0;
   const resultAfterFinancingCents = result - financingCostCents;
 
@@ -490,6 +494,7 @@ function evaluate(input: OfferInput): OfferResult {
   if (floorCents === null) notify("PISO_NAO_CALCULADO");
   else if (gross > 0 && gross < floorCents) notify("ABAIXO_DO_PISO");
   if (input.tollPayer === "contractor") notify("VALE_PEDAGIO_CONFERIR");
+  if (receivableCents < 0) notify("SALDO_NEGATIVO");
   // o dono só vai saber o custo fixo por dia depois de usar o app: avisa, mas não trava a análise
   if (input.fixedCostPerDayCents === null) notify("CUSTO_FIXO_NAO_INFORMADO");
   if (input.retention) {

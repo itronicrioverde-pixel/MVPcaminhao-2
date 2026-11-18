@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ApiError, httpApi } from "@/lib/api-client";
+import { claimPending, lastOwner, loadFuel, PENDING_OWNER, saveFuel, setLastOwner } from "@/lib/fuel-store";
 import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, planFuelSync, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
 import { analyzeOffer, costPerKmFromYear, type Decision, type ExpenseBasis, type OfferResult } from "@/lib/offer";
-import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, MAX_EXPENSE_ROWS, parseKm, parseLiters, parseMoney, type ExpenseRow, type OfferForm } from "@/lib/offer-form";
+import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, MAX_EXPENSE_ROWS, maskMoney, parseKm, parseLiters, parseMoney, type ExpenseRow, type OfferForm } from "@/lib/offer-form";
 
 // Só o que é do caminhão e do jeito de trabalhar fica guardado neste aparelho.
 // O que é da oferta (frete, quilômetros, pedágio, duração) começa vazio a cada análise.
@@ -14,23 +15,7 @@ const STORAGE_KEY = "rota-financeira:analise-de-frete:v1";
 const REMEMBERED_TEXT = ["kplEmpty", "kplLoaded", "kplAvg", "diesel", "vehicleKm", "vehicleKmAll", "fixedDay", "commission", "margin", "arlaPct", "arlaPrice", "moneyCost", "advance", "balanceDays", "axles"] as const;
 
 const ANTT_CALCULATOR = "https://calculadorafrete.antt.gov.br/";
-const FUEL_STORAGE_KEY = "rota-financeira:consumo-medido:v1";
-
 type StoredFuel = FuelRecord & { id: string };
-
-function loadFuelRecords(): StoredFuel[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(FUEL_STORAGE_KEY) ?? "[]") as unknown;
-    if (!Array.isArray(saved)) return [];
-    const records = saved.filter((item): item is StoredFuel =>
-      typeof item === "object" && item !== null && typeof (item as StoredFuel).id === "string",
-    );
-    return validateFuelRecords(records).length === 0 ? records : [];
-  } catch {
-    return [];
-  }
-}
 
 const TONES: Record<Decision, { title: string; box: string; icon: typeof Calculator }> = {
   compensa: { title: "Compensa", box: "border-emerald-300 bg-emerald-50 text-emerald-950", icon: CircleCheck },
@@ -69,9 +54,11 @@ function dieselLimit(maxMilli: number, currentMilli: number) {
   return `até ${formatBRL(Math.floor(maxMilli / 10))}/L (mais ${increase}%)`;
 }
 
-function NumField({ field, label, value, onChange, error, hint, numeric, disabled }: {
+function NumField({ field, label, value, onChange, error, hint, numeric, disabled, money }: {
   field: string; label: string; value: string; onChange: (value: string) => void;
   error?: string; hint?: string; numeric?: boolean; disabled?: boolean;
+  /** Formata como dinheiro enquanto digita: 1006000 vira 1.006.000. */
+  money?: boolean;
 }) {
   const id = `offer-${field}`;
   return (
@@ -81,7 +68,7 @@ function NumField({ field, label, value, onChange, error, hint, numeric, disable
         id={id}
         value={value}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(money ? maskMoney(event.target.value) : event.target.value)}
         inputMode={numeric ? "numeric" : "decimal"}
         autoComplete="off"
         aria-invalid={error ? true : undefined}
@@ -259,7 +246,7 @@ function ExpensesEditor({ rows, errors, quick, onChange }: {
                   inputMode="decimal"
                   autoComplete="off"
                   aria-invalid={error ? true : undefined}
-                  onChange={(event) => update(row.id, { amount: event.target.value })}
+                  onChange={(event) => update(row.id, { amount: row.basis === "trip" || row.basis === "day" ? maskMoney(event.target.value) : event.target.value })}
                   className={`mt-1 h-12 rounded-xl bg-white text-base ${error ? "border-red-500" : ""}`}
                 />
               </div>
@@ -334,7 +321,9 @@ function loadRemembered(): OfferForm {
 export function OfferView() {
   // Esta tela só abre depois do clique no menu, nunca vem pronta do servidor: ler aqui é seguro.
   const [form, setForm] = useState<OfferForm>(loadRemembered);
-  const [fuelRecords, setFuelRecords] = useState<StoredFuel[]>(loadFuelRecords);
+  // A lista só aparece depois de o servidor dizer de quem é a conta: assim nada de outra conta neste navegador é mostrado nem enviado.
+  const [fuelRecords, setFuelRecords] = useState<StoredFuel[]>([]);
+  const [fuelOwner, setFuelOwner] = useState<string | null>(null);
   const [fuelOdometer, setFuelOdometer] = useState("");
   const [fuelLiters, setFuelLiters] = useState("");
   const [fuelFull, setFuelFull] = useState(true);
@@ -357,28 +346,36 @@ export function OfferView() {
     }
   }, [form]);
 
+  // cópia no aparelho, separada por conta
   useEffect(() => {
-    try {
-      window.localStorage.setItem(FUEL_STORAGE_KEY, JSON.stringify(fuelRecords));
-    } catch {
-      // sem armazenamento: a medição continua nesta tela
-    }
-  }, [fuelRecords]);
+    if (fuelOwner !== null) saveFuel(window.localStorage, fuelOwner, fuelRecords);
+  }, [fuelOwner, fuelRecords]);
 
-  // Ao abrir: busca o que está no banco, junta com o que está no aparelho e envia o que faltar.
+  // Ao abrir: o servidor diz de quem é a conta; só então junta a cópia dela com o banco e envia o que faltar.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const { records: remote } = await httpApi.get<{ records: StoredFuel[] }>("/api/fuel");
-        const plan = planFuelSync(loadFuelRecords(), remote);
+        const { ownerKey, records: remote, deleted } = await httpApi.get<{ ownerKey: string; records: StoredFuel[]; deleted: string[] }>("/api/fuel", { timeoutMs: 6000 });
+        // o que foi lançado antes de saber a conta (sem internet) é da primeira conta que sincroniza
+        const local = [...loadFuel(window.localStorage, ownerKey), ...claimPending(window.localStorage)];
+        const plan = planFuelSync(local, remote, deleted);
         if (plan.toUpload.length > 0) await httpApi.put("/api/fuel", { records: plan.toUpload });
         if (cancelled) return;
+        setLastOwner(window.localStorage, ownerKey);
+        setFuelOwner(ownerKey);
         setFuelRecords(plan.merged);
         setFuelStatus("saved");
         if (plan.conflicts.length > 0) setFuelError(`${plan.conflicts.length} abastecimento(s) deste aparelho ficaram de fora porque já havia outro com o mesmo odômetro salvo.`);
-      } catch {
-        if (!cancelled) setFuelStatus("local");
+      } catch (error) {
+        if (cancelled) return;
+        setFuelStatus("local");
+        // sessão expirada: não dá para saber de quem é este aparelho, então nada é mostrado
+        if (error instanceof ApiError && error.status === 401) return;
+        // sem conexão: mostra a cópia da última conta que sincronizou aqui, ou a pendente
+        const owner = lastOwner(window.localStorage) ?? PENDING_OWNER;
+        setFuelOwner(owner);
+        setFuelRecords(loadFuel(window.localStorage, owner));
       }
     })();
     return () => { cancelled = true; };
@@ -387,11 +384,12 @@ export function OfferView() {
   const consumption = useMemo(() => (validateFuelRecords(fuelRecords).length === 0 ? measureConsumption(fuelRecords) : null), [fuelRecords]);
 
   function addFuelRecord() {
+    if (fuelOwner === null) return setFuelError("Entre na sua conta para guardar as medições.");
     const odometer = parseKm(fuelOdometer);
     const liters = parseLiters(fuelLiters);
     if (odometer.error || liters.error) return setFuelError(odometer.error ?? liters.error);
     if (odometer.value === null || liters.value === null) return setFuelError("Informe o odômetro e os litros.");
-    const next = [...fuelRecords, { id: `${Date.now()}-${fuelRecords.length}`, odometerKm: odometer.value, litersMilli: liters.value, full: fuelFull, state: fuelState }];
+    const next = [...fuelRecords, { id: crypto.randomUUID(), odometerKm: odometer.value, litersMilli: liters.value, full: fuelFull, state: fuelState }];
     const errors = validateFuelRecords(next);
     if (errors.length > 0) return setFuelError(errors[0]);
     setFuelError(null);
@@ -529,10 +527,10 @@ export function OfferView() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               {form.freightMode === "fixed" ? (
-                <NumField field="freight" label="Valor do frete (R$)" value={form.freight} onChange={set("freight")} error={built.errors.freight} />
+                <NumField money field="freight" label="Valor do frete (R$)" value={form.freight} onChange={set("freight")} error={built.errors.freight} />
               ) : (
                 <>
-                  <NumField field="rate" label="Valor por tonelada (R$)" value={form.rate} onChange={set("rate")} error={built.errors.rate} />
+                  <NumField money field="rate" label="Valor por tonelada (R$)" value={form.rate} onChange={set("rate")} error={built.errors.rate} />
                   <NumField field="weightKg" label="Peso carregado (kg)" value={form.weightKg} onChange={set("weightKg")} error={built.errors.weightKg} numeric hint="Em quilos, o peso que foi carregado. 50 toneladas = 50.000." />
                 </>
               )}
@@ -602,9 +600,9 @@ export function OfferView() {
               </div>
               {fuelError ? <p className="font-semibold text-red-700">{fuelError}</p> : null}
               <p data-testid="fuel-status" className="text-xs text-slate-600">
-                {fuelStatus === "saved" ? "Salvo na sua conta." : fuelStatus === "local" ? "Salvo só neste aparelho por enquanto. Envio para a sua conta quando a conexão voltar e você abrir esta tela." : "Verificando…"}
+                {fuelStatus === "saved" ? "Salvo na sua conta." : fuelStatus === "local" ? (fuelOwner === null ? "Entre na sua conta para ver e guardar as medições." : "Salvo só neste aparelho por enquanto. Envio para a sua conta quando a conexão voltar e você abrir esta tela.") : "Verificando…"}
               </p>
-              <button type="button" onClick={addFuelRecord} className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white">Adicionar abastecimento</button>
+              <button type="button" onClick={addFuelRecord} disabled={fuelOwner === null && fuelStatus === "checking"} className="min-h-11 rounded-lg bg-[#10251f] px-4 text-sm font-bold text-white disabled:opacity-50">Adicionar abastecimento</button>
 
               {fuelRecords.length > 0 ? (
                 <ul className="divide-y divide-black/10 rounded-xl bg-[#f3f6f4]">
@@ -659,7 +657,7 @@ export function OfferView() {
               {contractorToll ? <p className="mt-1 text-xs text-[#718078]">Em regra o contratante paga o vale-pedágio (Lei 10.209/2001). Confira o valor.</p> : null}
             </div>
             <div>
-              <NumField field="toll" label="Pedágio (R$)" value={form.noToll && !contractorToll ? "" : form.toll} onChange={set("toll")} error={built.errors.toll} disabled={form.noToll && !contractorToll} hint={contractorToll ? "Só para conferir se o vale cobre a rota." : undefined} />
+              <NumField money field="toll" label="Pedágio (R$)" value={form.noToll && !contractorToll ? "" : form.toll} onChange={set("toll")} error={built.errors.toll} disabled={form.noToll && !contractorToll} hint={contractorToll ? "Só para conferir se o vale cobre a rota." : undefined} />
               {!contractorToll ? <CheckField label="Esta rota não tem pedágio" checked={form.noToll} onChange={set("noToll")} /> : null}
             </div>
             {quick ? (
@@ -693,7 +691,7 @@ export function OfferView() {
             ) : (
               <>
               <NumField field="vehicleKm" label="Custo por km do caminhão (R$/km)" value={form.vehicleKm} onChange={set("vehicleKm")} error={built.errors.vehicleKm} hint="Pneus, manutenção e desgaste por km rodado." />
-              <NumField field="fixedDay" label="Custo fixo por dia (R$/dia)" value={form.fixedDay} onChange={set("fixedDay")} error={built.errors.fixedDay} hint="Parcela, seguro, IPVA, depreciação, rastreador, salário. Deixe em branco se ainda não sabe: o app só avisa que ele não entrou na conta." />
+              <NumField money field="fixedDay" label="Custo fixo por dia (R$/dia)" value={form.fixedDay} onChange={set("fixedDay")} error={built.errors.fixedDay} hint="Parcela, seguro, IPVA, depreciação, rastreador, salário. Deixe em branco se ainda não sabe: o app só avisa que ele não entrou na conta." />
               <HelpNote title="O que é o custo fixo?" className="sm:col-span-2">
                 <p>É o gasto do caminhão que existe mesmo com o caminhão parado: você paga rodando ou não.</p>
                 <p><b>Entra:</b> parcela, seguro, IPVA e licenciamento, rastreador, salário fixo do motorista e depreciação (o quanto o caminhão perde de valor com o tempo).</p>
@@ -779,7 +777,7 @@ export function OfferView() {
                   <option value="net">Frete menos os descontos</option>
                 </select>
               </div>
-              <NumField field="discounts" label="Descontos já combinados (R$)" value={form.discounts} onChange={set("discounts")} error={built.errors.discounts} hint="Retenções ou abatimentos definitivos, com documento." />
+              <NumField money field="discounts" label="Descontos já combinados (R$)" value={form.discounts} onChange={set("discounts")} error={built.errors.discounts} hint="Retenções ou abatimentos definitivos, com documento." />
               <NumField field="otherPct" label="Outros percentuais sobre o frete (%)" value={form.otherPct} onChange={set("otherPct")} error={built.errors.otherPct} hint="Só se você sabe o que incide no seu caso." />
 
               <div className="sm:col-span-2 border-t border-black/10 pt-4">
@@ -797,7 +795,7 @@ export function OfferView() {
                 </p>
               </div>
               <NumField field="ccd" label="CCD do piso ANTT (R$/km)" value={form.ccd} onChange={set("ccd")} error={built.errors.ccd} hint="Custo de deslocamento por km." />
-              <NumField field="cc" label="CC do piso ANTT (R$)" value={form.cc} onChange={set("cc")} error={built.errors.cc} hint="Custo de carga e descarga." />
+              <NumField money field="cc" label="CC do piso ANTT (R$)" value={form.cc} onChange={set("cc")} error={built.errors.cc} hint="Custo de carga e descarga." />
 
               <div className="sm:col-span-2 border-t border-black/10 pt-4">
                 <p className="text-sm font-bold">Folga de segurança</p>
@@ -934,7 +932,11 @@ export function OfferView() {
                     <p className="text-sm font-semibold text-emerald-800">O adiantamento cobre as despesas da estrada: você não precisa usar o seu caixa.</p>
                   ) : null}
                   {result.advanceCents > 0 ? <Row label="Adiantamento" detail="logo no início" value={formatBRL(result.advanceCents)} /> : null}
-                  {result.advanceCents > 0 || result.financingCostCents > 0 ? <Row label="Saldo a receber" detail={input.balanceDays === null ? undefined : input.balanceDays === 0 ? "na descarga" : `em ${input.balanceDays} dias`} value={formatBRL(result.receivableCents)} /> : null}
+                  {result.receivableCents < 0 ? (
+                    <Row label="Você devolve ao contratante" detail="o adiantamento passou do que você tem a receber" value={formatBRL(-result.receivableCents)} />
+                  ) : result.advanceCents > 0 || result.financingCostCents > 0 ? (
+                    <Row label="Saldo a receber" detail={input.balanceDays === null ? undefined : input.balanceDays === 0 ? "na descarga" : `em ${input.balanceDays} dias`} value={formatBRL(result.receivableCents)} />
+                  ) : null}
                   {result.financingCostCents > 0 ? (
                     <>
                       <Row label="Custo de esperar o saldo" value={`− ${formatBRL(result.financingCostCents)}`} />

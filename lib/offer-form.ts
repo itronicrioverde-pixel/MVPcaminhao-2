@@ -53,6 +53,22 @@ export const parsePricePerLiter = (text: string) => parseScaled(text, 3, false);
 export const parseLiters = (text: string) => parseScaled(text.replace(/\s*[lL]\s*$/, ""), 3, true);
 /** km/L -> centésimos de km/L. */
 export const parseConsumption = (text: string) => parseScaled(text, 2, false);
+const MAX_MASK_DIGITS = 13;
+
+/**
+ * Formata o dinheiro enquanto o dono digita: milhares com ponto e até dois dígitos depois da vírgula.
+ * O ponto digitado é sempre milhar (o decimal é a vírgula), igual ao teclado em português.
+ * O resultado é lido do mesmo jeito por `parseMoney`.
+ */
+export function maskMoney(text: string): string {
+  const comma = text.indexOf(",");
+  const integerPart = (comma === -1 ? text : text.slice(0, comma)).replace(/\D/g, "").slice(0, MAX_MASK_DIGITS).replace(/^0+(?=\d)/, "");
+  const decimals = comma === -1 ? null : text.slice(comma + 1).replace(/\D/g, "").slice(0, 2);
+  if (integerPart === "" && decimals === null) return "";
+  const grouped = (integerPart === "" ? "0" : integerPart).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return decimals === null ? grouped : `${grouped},${decimals}`;
+}
+
 /** % -> pontos-base, até 100%. */
 export function parsePercent(text: string): Parsed {
   const parsed = parseScaled(text, 2, false);

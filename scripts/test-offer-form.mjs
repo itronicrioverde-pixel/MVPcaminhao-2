@@ -218,5 +218,15 @@ try{
   const e2e=offer.analyzeOffer(withRows([row(),row({id:'a',label:'Seguro',amount:'2',basis:'percent'})]).input);
   assert.equal(e2e.resultCents,491360-38000-20120);assert.deepEqual(e2e.expenseLines.map(l=>[l.label,l.cents]),[['Chapa',38000],['Seguro',20120]]);
 
+  // formatação ao digitar: milhares com ponto e até dois dígitos depois da vírgula
+  const m=f.maskMoney;
+  for(const [typed,shown] of [['',''],['1','1'],['12','12'],['123','123'],['1234','1.234'],['10060','10.060'],['1006000','1.006.000'],['10.060','10.060'],['10.0600','100.600'],['1.234.567,89','1.234.567,89'],
+    ['10060,','10.060,'],['10060,5','10.060,5'],['10060,56','10.060,56'],['10060,567','10.060,56'],['0,05','0,05'],[',5','0,5'],['007','7'],['0','0'],['00','0'],['R$ 380','380'],['R$ 10.060,00','10.060,00'],['abc',''],['1a2b3','123'],['1,2,3','1,23'],[' 450 ','450'],['-5','5']])
+    assert.equal(m(typed),shown,`"${typed}" deve aparecer como "${shown}"`);
+  assert.equal(m('9'.repeat(30)).replace(/\./g,'').length,13,'limita o tamanho');
+  // o que aparece é lido de volta como o dono quis
+  for(const typed of ['10060','10060,5','1006000','380','0,05','1234567,89']){const shown=m(typed);const a=f.parseMoney(shown);assert.equal(a.error,null,shown);assert.equal(a.value,f.parseMoney(typed).value,`"${typed}" -> "${shown}" vale o mesmo`);}
+  assert.equal(m(m('10060,5')),m('10060,5'),'aplicar duas vezes dá o mesmo');
+
   console.log('PASS: leitura de números em português (dinheiro, litro, consumo, percentual, km, kg, horas), vazio como desconhecido, recusa de formatos ambíguos, montagem da entrada do motor, "sem pedágio" x não conferido, erros por campo e formatação.');
 }finally{await rm(temp,{recursive:true,force:true});}

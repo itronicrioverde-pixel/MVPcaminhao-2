@@ -112,15 +112,19 @@ test("número digitado errado é apontado e nada é calculado", async ({ page })
   await openOffer(page);
   await fillTrip(page);
   await fill(page, "Valor do frete (R$)", "10.060");
-  await fill(page, "Pedágio (R$)", "abc");
+  await fill(page, "Custo por km do caminhão (R$/km)", "abc");
 
   await expect(page.getByText("Use só números, por exemplo 1.234,56.")).toBeVisible();
-  await expect(page.getByLabel("Pedágio (R$)", { exact: true })).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("Custo por km do caminhão (R$/km)", { exact: true })).toHaveAttribute("aria-invalid", "true");
   await expect(result(page)).toContainText("Corrija os campos em vermelho");
   await expect(result(page)).not.toContainText("Compensa");
 
-  await fill(page, "Pedágio (R$)", "450");
+  await fill(page, "Custo por km do caminhão (R$/km)", "1,50");
   await expect(result(page)).toContainText("Compensa");
+
+  // campo de valor em reais: letras nem chegam a aparecer
+  await fill(page, "Pedágio (R$)", "abc");
+  await expect(page.getByLabel("Pedágio (R$)", { exact: true })).toHaveValue("");
 });
 
 test("preço do litro com ponto é lido como decimal, nunca como milhar", async ({ page }) => {
@@ -743,7 +747,7 @@ test("medir consumo: rendimento fora do normal é avisado", async ({ page }) => 
   await expect(measured(page)).toContainText("fora do normal");
 });
 
-test("medir consumo: dá para remover um abastecimento e os registros ficam guardados neste aparelho", async ({ page }) => {
+test("medir consumo: dá para remover um abastecimento e os registros continuam depois de recarregar", async ({ page }) => {
   await openOffer(page, "quick");
   await openMeasure(page);
   await addExampleFuel(page);
@@ -753,7 +757,7 @@ test("medir consumo: dá para remover um abastecimento e os registros ficam guar
   await expect(measured(page)).not.toContainText("Misto");
 
   await page.reload();
-  await openOffer(page, "quick");
+  await openOffer(page, "quick", { keepFuel: true });
   await openMeasure(page);
   await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(6);
   await expect(measured(page)).toContainText("1,90 km/L");
@@ -881,8 +885,10 @@ test("outras despesas: o contratante que desconta do frete não é custo seu", a
 test("outras despesas: valor errado é apontado na linha e remover a linha tira da conta", async ({ page }) => {
   await openExpenses(page);
   await addChip(page, "Multa");
+  await page.getByLabel("Como cobra a despesa 1", { exact: true }).selectOption("km");
   await page.getByLabel(/^Valor da despesa 1 /).fill("abc");
   await expect(page.getByText("Use só números").first()).toBeVisible();
+  await page.getByLabel("Como cobra a despesa 1", { exact: true }).selectOption("trip");
   await expect(result(page)).not.toContainText("R$ 4.913,60");
   await page.getByLabel(/^Valor da despesa 1 /).fill("500");
   await expect(result(page)).toContainText("R$ 4.413,60");
@@ -920,6 +926,98 @@ test("outras despesas: o caixa até descarregar conta a despesa que sai do seu b
   await expect(result(page)).toContainText("R$ 2.756,04");
 });
 
+test("saldo negativo: os descontos passam do saldo e o app mostra quanto o dono devolve", async ({ page }) => {
+  await openExpenses(page, "quick");
+  await addChip(page, "Desconto de avaria");
+  await page.getByLabel(/^Valor da despesa 1 /).fill("3.000");
+  await page.getByLabel("Quem arca com a despesa 1", { exact: true }).selectOption("contractor");
+  const card = result(page);
+  await expect(card).toContainText("Você devolve ao contratante");
+  await expect(card).toContainText("R$ 988,00");
+  await expect(card).toContainText("vai cobrar a diferença de volta");
+  await expect(card).not.toContainText("Saldo a receber");
+});
+
+test("medir consumo: ao trocar de conta no mesmo navegador, as medições não passam para a outra conta", async ({ page, context }) => {
+  const project = test.info().project.name;
+  const asUser = (id: string) => context.setExtraHTTPHeaders({ "oai-authenticated-user-id": `troca-${id}-${project}`, "oai-authenticated-user-email": `${id}@sites.test`, "oai-authenticated-user-full-name": `Conta ${id}` });
+  const count = async () => (await (await page.request.get("/api/fuel")).json()).records.length;
+  await asUser("b");
+  await page.request.delete("/api/fuel?all=true");
+  await asUser("a");
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await addFuel(page, "100.600", "300", true, "loaded");
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  expect(await count()).toBe(2);
+
+  // outra conta entra no mesmo navegador
+  await asUser("b");
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(0);
+  expect(await count()).toBe(0);
+
+  // e quando a primeira volta, as suas medições continuam lá
+  await asUser("a");
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(2);
+  expect(await count()).toBe(2);
+});
+
+test("medir consumo: cópia antiga em outro aparelho não recria o abastecimento que foi apagado", async ({ page }) => {
+  await openOffer(page, "quick");
+  await openMeasure(page);
+  await addFuel(page, "100.000", "400", true, "loaded");
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  const before = await (await page.request.get("/api/fuel")).json();
+  const old = before.records[0];
+  await page.getByRole("button", { name: "Remover abastecimento 1", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(0);
+  await expect.poll(async () => (await (await page.request.get("/api/fuel")).json()).deleted).toContain(old.id);
+
+  // outro aparelho ainda guarda a cópia de antes de apagar
+  await page.evaluate(([key, record]) => window.localStorage.setItem(key, JSON.stringify([record])), [`rota-financeira:consumo-medido:v2:${before.ownerKey}`, old] as const);
+  await page.reload();
+  await openOffer(page, "quick", { keepFuel: true });
+  await openMeasure(page);
+  await expect(page.getByTestId("fuel-status")).toContainText("Salvo na sua conta");
+  await expect(page.getByRole("button", { name: /Remover abastecimento/ })).toHaveCount(0);
+  expect((await (await page.request.get("/api/fuel")).json()).records).toHaveLength(0);
+});
+
+test("digitar dinheiro: os milhares e os centavos aparecem enquanto o dono digita", async ({ page }) => {
+  await openOffer(page, "quick");
+  const freight = page.getByLabel("Valor do frete (R$)", { exact: true });
+  await freight.pressSequentially("10060");
+  await expect(freight).toHaveValue("10.060");
+  await expect(result(page)).toContainText("R$ 10.060,00");
+  await freight.fill("");
+  await freight.pressSequentially("1006000,567");
+  await expect(freight).toHaveValue("1.006.000,56");
+  await freight.fill("");
+  await freight.pressSequentially("10.060,5");
+  await expect(freight).toHaveValue("10.060,5");
+  const toll = page.getByLabel("Pedágio (R$)", { exact: true });
+  await toll.pressSequentially("1234");
+  await expect(toll).toHaveValue("1.234");
+  // campos de valor pequeno por km não são formatados
+  await addChip(page, "Lavagem");
+  await page.getByLabel("Como cobra a despesa 1", { exact: true }).selectOption("km");
+  const perKm = page.getByLabel(/^Valor da despesa 1 /);
+  await perKm.pressSequentially("0,05");
+  await expect(perKm).toHaveValue("0,05");
+  await page.getByLabel("Como cobra a despesa 1", { exact: true }).selectOption("trip");
+  await perKm.fill("");
+  await perKm.pressSequentially("1500");
+  await expect(perKm).toHaveValue("1.500");
+});
+
 // ---------- perfil fiscal e retenções estimadas ----------
 // Autônomo (pessoa física) contratado por empresa: INSS 11% e SEST/SENAT 2,5%, ambos sobre 20% do frete bruto (2,7%).
 
@@ -941,8 +1039,10 @@ test("retenções: por padrão aparecem como estimativa e não mudam o resultado
 test("retenções: contar no resultado muda o resultado, o frete mínimo e o aviso", async ({ page }) => {
   await openOffer(page, "quick");
   await fillQuick(page, "10.060");
+  await expect(result(page)).toContainText("R$ 2.012,00");
   await page.getByLabel("Contar as retenções estimadas no resultado", { exact: true }).check();
   const card = result(page);
+  await expect(card).toContainText("R$ 1.740,38");
   await expect(card).toContainText("R$ 4.284,54");
   await expect(card).toContainText("42,59%");
   await expect(card).toContainText("R$ 4.977,51");

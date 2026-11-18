@@ -194,3 +194,11 @@ Regras do cálculo:
 - Cada linha aparece no "Como chegamos nesse resultado". Há uma explicação curta sobre a diferença entre despesa e desconto e sobre não contar duas vezes (parcela, seguro e manutenção já estão no custo por km; a diária do motorista pode já estar na comissão).
 
 Não feito, de propósito: estadia **recebida** (o contratante paga a espera) como receita a mais, e memória dos nomes de despesa usados antes.
+
+## Ajustes depois da revisão do código
+
+- **Medições por conta:** a cópia no aparelho é separada pelo identificador da conta que o servidor devolve (um código derivado, não o id real). A lista só aparece depois de o servidor responder. Uma conta nunca vê nem envia o que é de outra no mesmo navegador. Sem internet, mostra a cópia da última conta que sincronizou. O que foi lançado sem nenhuma conta conhecida fica "pendente" e é assumido pela primeira conta que sincronizar.
+- **Apagados não voltam:** o banco guarda os ids apagados (`fuel_deleted`). Uma cópia antiga em outro aparelho é descartada ao sincronizar, e o servidor recusa recriar um registro apagado.
+- **Saldo a receber:** a retenção contada e os descontos reduzem o saldo da descarga, e o custo de esperar usa o saldo certo. Se o adiantamento passar do que há a receber, o saldo fica **negativo**: a tela mostra "Você devolve ao contratante" e um aviso, em vez de zero.
+- **Digitar dinheiro:** campos em reais formatam milhares enquanto se digita (1006000 vira 1.006.000) e aceitam até dois dígitos depois da vírgula. O ponto digitado conta como milhar. Campos de valor pequeno por km e o preço do litro não são formatados.
+- **Dependências:** `next` 16.4.6, `zod` 4 e `fast-uri` 3.1.9; a auditoria de produção ficou sem vulnerabilidades.

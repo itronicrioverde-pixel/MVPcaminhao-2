@@ -51,7 +51,7 @@ PRAGMA index_list('revenues');
 | `0004_melodic_stryfe` | `trips.driver_percent` | coluna presente |
 | `0005_normal_turbo` | `trips.freight_per_ton` | coluna presente |
 | `0006_slimy_mandroid` | `trips.loss_alert_percent` | coluna presente |
-| `0007_tired_shooting_star` | tabela `fuel_records` (medições de combustível) e índice `uq_fuel_owner_odometer` | `fuel_records` existe e `PRAGMA index_list('fuel_records')` mostra o índice. **Sem aplicar esta migração em produção, a tela de medir consumo cai para o modo só neste aparelho, sem erro.** |
+| `0007_odd_forgotten_one` | tabelas `fuel_records` (medições de combustível) e `fuel_deleted` (ids apagados, para a cópia antiga de outro aparelho não recriá-los) e o índice `uq_fuel_owner_odometer` | as duas tabelas existem e `PRAGMA index_list('fuel_records')` mostra o índice. **Sem aplicar esta migração em produção, a tela de medir consumo cai para o modo só neste aparelho, sem erro.** |
 
 ## 3. Decisão por migração (nunca pular nem repetir arquivos automaticamente)
 

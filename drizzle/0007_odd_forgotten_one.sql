@@ -1,3 +1,10 @@
+CREATE TABLE `fuel_deleted` (
+	`id` text NOT NULL,
+	`owner_id` text NOT NULL,
+	`deleted_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+	PRIMARY KEY(`owner_id`, `id`)
+);
+--> statement-breakpoint
 CREATE TABLE `fuel_records` (
 	`id` text NOT NULL,
 	`owner_id` text NOT NULL,

@@ -14,7 +14,8 @@ try{
   const fuel=await import(pathToFileURL(await compile('app/api/fuel/route.ts')));
   const call=(method,path,body,user='owner-a',extra={})=>new Request('https://test.local'+path,{method,headers:{...(user?{'oai-authenticated-user-id':user}:{}),'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body)});
   const rec=(id,odometerKm,liters,full=true,state='loaded')=>({id,odometerKm,litersMilli:liters*1000,full,state});
-  const list=async(user='owner-a')=>(await (await fuel.GET(call('GET','/api/fuel',undefined,user))).json()).records;
+  const full=async(user='owner-a')=>(await fuel.GET(call('GET','/api/fuel',undefined,user))).json();
+  const list=async(user='owner-a')=>(await full(user)).records;
 
   // sem sessão e origem diferente são recusados
   let r=await fuel.GET(call('GET','/api/fuel',undefined,''));assert.equal(r.status,401);assert.equal((await r.json()).code,'SESSION_EXPIRED');
@@ -69,6 +70,34 @@ try{
   r=await fuel.DELETE(call('DELETE','/api/fuel'));assert.equal(r.status,400);
   r=await fuel.DELETE(call('DELETE','/api/fuel?all=true'));assert.equal(r.status,200);assert.equal((await r.json()).deleted,5);
   assert.deepEqual(await list(),[]);assert.equal((await list('owner-b')).length,1,'o outro dono fica intacto');
+
+  // identificador do dono: opaco, estável, diferente entre donos, sem expor o id real
+  const keyA=(await full('owner-a')).ownerKey,keyB=(await full('owner-b')).ownerKey;
+  assert.match(keyA,/^[0-9a-f]{16}$/);assert.equal((await full('owner-a')).ownerKey,keyA,'estável');assert.notEqual(keyA,keyB);
+  assert.ok(!JSON.stringify(await full('owner-a')).includes('owner-a'),'o id real do dono não aparece na resposta');
+
+  // apagados: o servidor lembra, e o registro apagado não volta nem por POST nem por envio em lote
+  const tomb=async(u='owner-a')=>(await full(u)).deleted.filter(id=>id.startsWith('t')).sort();
+  assert.deepEqual((await full('owner-c')).deleted,[],'dono novo, nada apagado');
+  await fuel.DELETE(call('DELETE','/api/fuel?all=true'));
+  await fuel.POST(call('POST','/api/fuel',rec('t1',500000,100)));await fuel.POST(call('POST','/api/fuel',rec('t2',500500,100)));
+  assert.equal((await fuel.DELETE(call('DELETE','/api/fuel?id=t1'))).status,200);
+  assert.deepEqual(await tomb(),['t1'],'o apagado fica na lista');assert.deepEqual((await list()).map(x=>x.id),['t2']);
+  r=await fuel.POST(call('POST','/api/fuel',rec('t1',500000,100)));assert.equal(r.status,409,'POST do id apagado é recusado');
+  r=await fuel.PUT(call('PUT','/api/fuel',{records:[rec('t1',500000,100),rec('t3',500900,50)]}));assert.deepEqual(await r.json(),{imported:1,skipped:1},'envio em lote ignora o apagado e aceita o novo');
+  assert.deepEqual((await list()).map(x=>x.id).sort(),['t2','t3'],'t1 não voltou');
+  assert.equal((await fuel.POST(call('POST','/api/fuel',rec('t4',500000,70)))).status,201,'o odômetro do apagado pode ser usado por um registro novo');
+  assert.equal((await fuel.DELETE(call('DELETE','/api/fuel?id=t1'))).status,404,'apagar de novo o que já foi apagado');assert.deepEqual(await tomb(),['t1']);
+  // apagar tudo também lembra todos
+  r=await fuel.DELETE(call('DELETE','/api/fuel?all=true'));assert.equal((await r.json()).deleted,3);
+  assert.deepEqual(await tomb(),['t1','t2','t3','t4']);assert.deepEqual(await list(),[]);
+  r=await fuel.PUT(call('PUT','/api/fuel',{records:[rec('t2',500500,100),rec('t3',500900,50),rec('t4',500000,70)]}));assert.deepEqual(await r.json(),{imported:0,skipped:3},'cópia antiga de um aparelho não recria nada');
+  assert.deepEqual(await list(),[]);
+  // a lista de apagados é de cada dono
+  assert.deepEqual(await tomb('owner-b'),[]);
+  assert.equal((await fuel.POST(call('POST','/api/fuel',rec('t2',500500,100),'owner-b'))).status,201,'outro dono pode usar o mesmo id');
+  assert.equal((await fuel.POST(call('POST','/api/fuel',rec('t5',500000,100)))).status,201,'o dono pode lançar de novo com um id novo');
+
   // depois de apagar, o odômetro pode ser usado de novo
   assert.equal((await fuel.POST(call('POST','/api/fuel',rec('f1',100000,400)))).status,201);
   console.log('PASS: /api/fuel — sessão e origem, criar/listar em ordem, id do servidor, odômetro e id duplicados (409), validação, isolamento por dono, importação em lote idempotente e atômica, limite, apagar um e todos.');
