@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { Calculator, CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ApiError, httpApi } from "@/lib/api-client";
@@ -8,7 +9,7 @@ import { saveFuel } from "@/lib/fuel-store";
 import { syncFuel } from "@/lib/fuel-sync";
 import { ANTT_REFERENCE_YEAR, anttKmPerLiterCenti, blendedKmPerLiterCenti, formatKmPerLiter, isPlausibleKmPerLiter, measureConsumption, validateFuelRecords, type ConsumptionGroup, type FuelRecord } from "@/lib/fuel";
 import { analyzeOffer, costPerKmFromYear, type Decision, type ExpenseBasis, type OfferResult } from "@/lib/offer";
-import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, MAX_EXPENSE_ROWS, maskMoney, parseKm, parseLiters, parseMoney, type ExpenseRow, type OfferForm } from "@/lib/offer-form";
+import { buildOfferInput, emptyOfferForm, formatBp, formatBRL, formatLiters, caretAfterMask, MAX_EXPENSE_ROWS, maskMoney, parseKm, parseLiters, parseMoney, pasteMoney, type ExpenseRow, type OfferForm } from "@/lib/offer-form";
 
 // Só o que é do caminhão e do jeito de trabalhar fica guardado neste aparelho.
 // O que é da oferta (frete, quilômetros, pedágio, duração) começa vazio a cada análise.
@@ -55,6 +56,34 @@ function dieselLimit(maxMilli: number, currentMilli: number) {
   return `até ${formatBRL(Math.floor(maxMilli / 10))}/L (mais ${increase}%)`;
 }
 
+/**
+ * Campo de dinheiro: formata ao digitar e ao apagar (o ponto é sempre milhar), mantém o cursor junto do mesmo dígito
+ * e trata o texto colado à parte, onde "200.5" é um decimal.
+ */
+function moneyInputProps(onValue: (value: string) => void) {
+  return {
+    onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+      const input = event.target;
+      const before = input.value;
+      const caret = input.selectionStart ?? before.length;
+      const after = maskMoney(before);
+      // atualiza o campo e põe o cursor no mesmo instante: se ficasse para o próximo quadro, uma tecla digitada antes disso cairia no lugar errado
+      flushSync(() => onValue(after));
+      const position = caretAfterMask(before, caret, after);
+      try { input.setSelectionRange(position, position); } catch { /* campo sem seleção */ }
+    },
+    onPaste: (event: React.ClipboardEvent<HTMLInputElement>) => {
+      event.preventDefault();
+      const input = event.currentTarget;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      const next = pasteMoney(input.value, start, end, event.clipboardData.getData("text"));
+      flushSync(() => onValue(next));
+      try { input.setSelectionRange(next.length, next.length); } catch { /* campo sem seleção */ }
+    },
+  };
+}
+
 function NumField({ field, label, value, onChange, error, hint, numeric, disabled, money }: {
   field: string; label: string; value: string; onChange: (value: string) => void;
   error?: string; hint?: string; numeric?: boolean; disabled?: boolean;
@@ -69,7 +98,7 @@ function NumField({ field, label, value, onChange, error, hint, numeric, disable
         id={id}
         value={value}
         disabled={disabled}
-        onChange={(event) => onChange(money ? maskMoney(event.target.value) : event.target.value)}
+        {...(money ? moneyInputProps(onChange) : { onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange(event.target.value) })}
         inputMode={numeric ? "numeric" : "decimal"}
         autoComplete="off"
         aria-invalid={error ? true : undefined}
@@ -254,7 +283,7 @@ function ExpensesEditor({ rows, errors, quick, onChange }: {
                   inputMode="decimal"
                   autoComplete="off"
                   aria-invalid={error ? true : undefined}
-                  onChange={(event) => update(row.id, { amount: row.basis === "trip" || row.basis === "day" ? maskMoney(event.target.value) : event.target.value })}
+                  {...(row.basis === "trip" || row.basis === "day" ? moneyInputProps((value) => update(row.id, { amount: value })) : { onChange: (event: React.ChangeEvent<HTMLInputElement>) => update(row.id, { amount: event.target.value }) })}
                   className={`mt-1 h-12 rounded-xl bg-white text-base ${error ? "border-red-500" : ""}`}
                 />
               </div>

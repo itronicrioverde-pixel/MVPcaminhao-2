@@ -1128,6 +1128,69 @@ test("saldo a receber: avisa quando ele ainda está antes da retenção estimada
   await expect(result(page)).not.toContainText("antes da retenção estimada");
 });
 
+test("digitar dinheiro: apagar um dígito nunca muda o valor em 10 ou 100 vezes", async ({ page }) => {
+  await openOffer(page, "quick");
+  const freight = page.getByLabel("Valor do frete (R$)", { exact: true });
+  await freight.pressSequentially("10060");
+  await expect(freight).toHaveValue("10.060");
+  await freight.press("Backspace");
+  await expect(freight).toHaveValue("1.006");
+  await expect(result(page)).toContainText("R$ 1.006,00");
+  await freight.press("Backspace");
+  await expect(freight).toHaveValue("100");
+  await freight.press("Backspace");
+  await freight.press("Backspace");
+  await freight.press("Backspace");
+  await expect(freight).toHaveValue("");
+
+  // Delete no começo
+  await freight.pressSequentially("10060");
+  await freight.press("Home");
+  await freight.press("Delete");
+  await expect(freight).toHaveValue("60");
+
+  // com centavos: apagar um centavo ou um dígito da parte inteira
+  await freight.fill("");
+  await freight.pressSequentially("10060,56");
+  await expect(freight).toHaveValue("10.060,56");
+  await freight.press("Backspace");
+  await expect(freight).toHaveValue("10.060,5");
+  await freight.press("Backspace");
+  await freight.press("Backspace");
+  await expect(freight).toHaveValue("10.060");
+});
+
+test("digitar dinheiro: o cursor fica no lugar ao editar no meio do número", async ({ page }) => {
+  await openOffer(page, "quick");
+  const freight = page.getByLabel("Valor do frete (R$)", { exact: true });
+  await freight.pressSequentially("10060");
+  await freight.press("Home");
+  await freight.press("ArrowRight");
+  await freight.press("ArrowRight");
+  await freight.press("Backspace");
+  await expect(freight).toHaveValue("1.060");
+  await freight.pressSequentially("5");
+  await expect(freight).toHaveValue("15.060");
+});
+
+test("digitar dinheiro: colar trata o ponto com um ou dois dígitos como decimal", async ({ page }) => {
+  await openOffer(page, "quick");
+  const freight = page.getByLabel("Valor do frete (R$)", { exact: true });
+  const paste = (text: string) => freight.evaluate((element, value) => {
+    const data = new DataTransfer();
+    data.setData("text", value);
+    element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  }, text);
+  await paste("200.5");
+  await expect(freight).toHaveValue("200,5");
+  await freight.fill("");
+  await paste("10.060");
+  await expect(freight).toHaveValue("10.060");
+  await freight.fill("");
+  await paste("R$ 1.234,56");
+  await expect(freight).toHaveValue("1.234,56");
+});
+
 // ---------- perfil fiscal e retenções estimadas ----------
 // Autônomo (pessoa física) contratado por empresa: INSS 11% e SEST/SENAT 2,5%, ambos sobre 20% do frete bruto (2,7%).
 

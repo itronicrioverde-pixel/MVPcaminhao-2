@@ -218,15 +218,55 @@ try{
   const e2e=offer.analyzeOffer(withRows([row(),row({id:'a',label:'Seguro',amount:'2',basis:'percent'})]).input);
   assert.equal(e2e.resultCents,491360-38000-20120);assert.deepEqual(e2e.expenseLines.map(l=>[l.label,l.cents]),[['Chapa',38000],['Seguro',20120]]);
 
-  // formatação ao digitar: milhares com ponto e até dois dígitos depois da vírgula
+  // formatação ao digitar: milhares com ponto e até dois dígitos depois da vírgula. Na edição o ponto é SEMPRE milhar.
   const m=f.maskMoney;
-  for(const [typed,shown] of [['',''],['1','1'],['12','12'],['123','123'],['1234','1.234'],['10060','10.060'],['1006000','1.006.000'],['10.060','10.060'],['10.0600','100.600'],['200.5','200,5'],['10.06','10,06'],['10.0','10,0'],['1.5','1,5'],['1.500','1.500'],['12.345.678','12.345.678'],['1.234,5','1.234,5'],['1.234.567,89','1.234.567,89'],
-    ['10060,','10.060,'],['10060,5','10.060,5'],['10060,56','10.060,56'],['10060,567','10.060,56'],['0,05','0,05'],[',5','0,5'],['007','7'],['0','0'],['00','0'],['R$ 380','380'],['R$ 10.060,00','10.060,00'],['abc',''],['1a2b3','123'],['1,2,3','1,23'],[' 450 ','450'],['-5','5']])
+  for(const [typed,shown] of [['',''],['1','1'],['12','12'],['123','123'],['1234','1.234'],['10060','10.060'],['1006000','1.006.000'],['10.060','10.060'],['10.0600','100.600'],['1.234.567,89','1.234.567,89'],
+    ['10060,','10.060,'],['10060,5','10.060,5'],['10060,56','10.060,56'],['10060,567','10.060,56'],['0,05','0,05'],[',5','0,5'],['007','7'],['0','0'],['00','0'],['R$ 380','380'],['R$ 10.060,00','10.060,00'],['abc',''],['1a2b3','123'],['1,2,3','1,23'],[' 450 ','450'],['-5','5'],
+    // apagar um dígito de "10.060" deixa "10.06", "1.060" etc.: continua sendo milhar, nunca vira decimal
+    ['10.06','1.006'],['10.0','100'],['1.06','106'],['1.0','10'],['10.60','1.060'],['0.060','60'],['.060','60'],['1.5','15'],['200.5','2.005'],['1.234,5','1.234,5']])
     assert.equal(m(typed),shown,`"${typed}" deve aparecer como "${shown}"`);
   assert.equal(m('9'.repeat(30)).replace(/\./g,'').length,13,'limita o tamanho');
-  // o que aparece é lido de volta como o dono quis
   for(const typed of ['10060','10060,5','1006000','380','0,05','1234567,89']){const shown=m(typed);const a=f.parseMoney(shown);assert.equal(a.error,null,shown);assert.equal(a.value,f.parseMoney(typed).value,`"${typed}" -> "${shown}" vale o mesmo`);}
   assert.equal(m(m('10060,5')),m('10060,5'),'aplicar duas vezes dá o mesmo');
+
+  // Backspace e Delete em qualquer posição: o valor só perde o dígito apagado, nunca muda de grandeza
+  const digitsOf=t=>t.replace(/[^\d]/g,'');
+  const stripZeros=t=>t.replace(/^0+(?=\d)/,'');
+  for(const typed of ['10060','1006000','7','12','1234','999999','100','1000']){
+    const shown=m(typed);
+    for(let i=0;i<shown.length;i++){
+      const after=shown.slice(0,i)+shown.slice(i+1);          // apagou o caractere i (dígito ou ponto), por Backspace ou Delete
+      const expectedDigits=stripZeros(digitsOf(after))||'';
+      assert.equal(digitsOf(m(after)),expectedDigits,`apagar o caractere ${i} de "${shown}" deixa "${after}" -> "${m(after)}"`);
+      assert.ok(!m(after).includes(','),`"${shown}" sem o caractere ${i} não ganha vírgula (veio "${m(after)}")`);
+    }
+  }
+  // com centavos: apagar um dígito da parte inteira ou dos centavos mantém a vírgula no lugar certo
+  assert.equal(m('10.060,5'.slice(0,-1)),'10.060,','apagar o último centavo');
+  assert.equal(m('10.060,56'.slice(0,-1)),'10.060,5');
+  assert.equal(m('10.06,56'),'1.006,56','apagar um dígito da parte inteira');
+  assert.equal(m('1.060,56'.replace('1.','.')),'60,56');
+  // Backspace repetido até esvaziar passa por todos os valores esperados
+  let cur=m('10060');const seen=[cur];while(cur!==''){cur=m(cur.slice(0,-1));seen.push(cur);}
+  assert.deepEqual(seen,['10.060','1.006','100','10','1','']);
+
+  // colar é outra coisa: um ponto com um ou dois dígitos no fim é um decimal vindo de fora
+  const pm=f.maskPastedMoney;
+  for(const [pasted,shown] of [['200.5','200,5'],['10.06','10,06'],['1.234','1.234'],['1.234,5','1.234,5'],['R$ 10.060,00','10.060,00'],['12.345.678','12.345.678'],['10060','10.060'],['0.5','0,5'],['1,5','1,5'],['abc',''],['1.2.3','123']])
+    assert.equal(pm(pasted),shown,`colar "${pasted}" deve dar "${shown}"`);
+  // colar no meio do que já está digitado, trocando a seleção
+  const pi=f.pasteMoney;
+  assert.equal(pi('',0,0,'200.5'),'200,5');assert.equal(pi('10',2,2,'5'),'105');assert.equal(pi('1.000',0,5,'2.5'),'2,5','troca tudo');
+  assert.equal(pi('1.234',1,1,'0'),'10.234','insere no meio');assert.equal(pi('10.060',0,3,'9'),'9.060');assert.equal(pi('5',1,1,'.50'),'550','pedaço colado que não é decimal sozinho entra como dígitos');
+
+  // o cursor fica junto do mesmo dígito depois da formatação
+  const cr=f.caretAfterMask;
+  assert.equal(cr('1.5000',3,'15.000'),2,'digitou 5 depois do 1: o cursor fica depois do 5');assert.equal(cr('10.06',5,'1.006'),5,'apagou no fim: cursor no fim');
+  assert.equal(cr('10060',5,'10.060'),6,'digitando no fim, o cursor vai para o fim');
+  assert.equal(cr('100600',2,'100.600'),2,'cursor depois de 2 dígitos');
+  assert.equal(cr('1234',1,'1.234'),1);assert.equal(cr('1234',2,'1.234'),3,'depois do 2º dígito, passando o ponto');
+  assert.equal(cr('12,5',3,'12,5'),3);assert.equal(cr('',0,''),0);assert.equal(cr('abc',2,''),0);assert.equal(cr('1.234',0,'1.234'),0);
+
 
   console.log('PASS: leitura de números em português (dinheiro, litro, consumo, percentual, km, kg, horas), vazio como desconhecido, recusa de formatos ambíguos, montagem da entrada do motor, "sem pedágio" x não conferido, erros por campo e formatação.');
 }finally{await rm(temp,{recursive:true,force:true});}

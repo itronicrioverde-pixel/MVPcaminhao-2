@@ -56,19 +56,43 @@ export const parseConsumption = (text: string) => parseScaled(text, 2, false);
 const MAX_MASK_DIGITS = 13;
 
 /**
- * Formata o dinheiro enquanto o dono digita: milhares com ponto e até dois dígitos depois da vírgula.
- * Um ponto seguido de um ou dois dígitos no fim ("200.5", "10.06") é um decimal colado de fora e vira vírgula;
- * o ponto de milhar sempre vem com três dígitos depois. O resultado é lido do mesmo jeito por `parseMoney`.
+ * Formata o dinheiro enquanto o dono digita ou apaga: milhares com ponto e até dois dígitos depois da vírgula.
+ * Na edição o ponto é SEMPRE milhar e é ignorado (o decimal é a vírgula): apagar um dígito de "10.060" deixa "10.06",
+ * que volta a ser "1.006", e nunca vira decimal. O resultado é lido do mesmo jeito por `parseMoney`.
  */
 export function maskMoney(text: string): string {
-  const trimmed = text.replace(/[^\d.,]/g, "");
-  const normalized = /^\d+\.\d{1,2}$/.test(trimmed) ? trimmed.replace(".", ",") : text;
-  const comma = normalized.indexOf(",");
-  const integerPart = (comma === -1 ? normalized : normalized.slice(0, comma)).replace(/\D/g, "").slice(0, MAX_MASK_DIGITS).replace(/^0+(?=\d)/, "");
-  const decimals = comma === -1 ? null : normalized.slice(comma + 1).replace(/\D/g, "").slice(0, 2);
+  const comma = text.indexOf(",");
+  const integerPart = (comma === -1 ? text : text.slice(0, comma)).replace(/\D/g, "").slice(0, MAX_MASK_DIGITS).replace(/^0+(?=\d)/, "");
+  const decimals = comma === -1 ? null : text.slice(comma + 1).replace(/\D/g, "").slice(0, 2);
   if (integerPart === "" && decimals === null) return "";
   const grouped = (integerPart === "" ? "0" : integerPart).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return decimals === null ? grouped : `${grouped},${decimals}`;
+}
+
+/** Texto colado de fora: um ponto com um ou dois dígitos no fim ("200.5", "10.06") é um decimal. Só vale para colar, nunca para editar. */
+function pastedPiece(pasted: string) {
+  return /^\D*\d+\.\d{1,2}\D*$/.test(pasted) ? pasted.replace(".", ",") : pasted;
+}
+
+export function maskPastedMoney(pasted: string): string {
+  return maskMoney(pastedPiece(pasted));
+}
+
+/** Resultado de colar `pasted` no lugar da seleção [start, end) do texto atual. */
+export function pasteMoney(current: string, start: number, end: number, pasted: string): string {
+  return maskMoney(current.slice(0, start) + pastedPiece(pasted) + current.slice(end));
+}
+
+/** Posição do cursor depois da formatação: fica logo depois do mesmo dígito (ou vírgula) em que estava. */
+export function caretAfterMask(before: string, caret: number, after: string): number {
+  const significant = /[\d,]/;
+  let remaining = [...before.slice(0, caret)].filter((char) => significant.test(char)).length;
+  if (remaining === 0) return 0;
+  for (let index = 0; index < after.length; index += 1) {
+    if (significant.test(after[index])) remaining -= 1;
+    if (remaining === 0) return index + 1;
+  }
+  return after.length;
 }
 
 /** % -> pontos-base, até 100%. */
