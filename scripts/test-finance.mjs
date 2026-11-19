@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {readFile,readdir,mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {join,resolve,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
@@ -10,7 +10,7 @@ async function compile(file){file=resolve(root,file);if(compiled.has(file))retur
 const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-05-01',d1Databases:['DB'],r2Buckets:['BUCKET']});
 try{
  const DB=await mf.getD1Database('DB'),BUCKET=await mf.getR2Bucket('BUCKET');globalThis.__testEnv={DB,BUCKET};
- for(const file of ['0000_narrow_blazing_skull.sql','0001_simple_the_order.sql','0002_sticky_purple_man.sql','0003_tough_pride.sql','0004_melodic_stryfe.sql','0005_normal_turbo.sql','0006_slimy_mandroid.sql']){const sql=await readFile(join(root,'drizzle',file),'utf8');for(const part of sql.split(';').map(x=>x.replace(/--> statement-breakpoint/g,'').trim()).filter(Boolean))await DB.prepare(part).run();}
+ for(const file of (await readdir(join(root,'drizzle'))).filter(f=>f.endsWith('.sql')).sort()){const sql=await readFile(join(root,'drizzle',file),'utf8');for(const part of sql.split(';').map(x=>x.replace(/--> statement-breakpoint/g,'').trim()).filter(Boolean))await DB.prepare(part).run();}
  const records=await import(pathToFileURL(await compile('app/api/records/route.ts'))),admin=await import(pathToFileURL(await compile('app/api/admin/route.ts'))),route=await import(pathToFileURL(await compile('app/api/route-estimate/route.ts'))),finance=await import(pathToFileURL(await compile('lib/finance.ts')));
  const request=(path,body,user='owner-a',method='POST')=>new Request('https://test.local'+path,{method:body?method:'GET',headers:{...(user?{'oai-authenticated-user-id':user}:{}),'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
  const trip={kind:'trip',tripDate:new Date().toISOString().slice(0,10),origin:'Cristalina, GO',destination:'Sinop, MT',freight:13200,km:1800,diesel:4700,toll:750,oil:0,extraItems:[{category:'Alimentação',amount:80},{category:'Ajudante',amount:120}],axles:6};
